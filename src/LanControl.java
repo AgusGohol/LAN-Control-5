@@ -1,0 +1,516 @@
+import javax.swing.*;
+import javax.crypto.*;
+import javax.crypto.spec.*;
+import javax.imageio.ImageIO;
+import java.awt.*;
+import java.awt.event.*;
+import java.awt.image.BufferedImage;
+import java.io.*;
+import java.net.*;
+import java.nio.ByteBuffer;
+import java.nio.file.Path;
+import java.security.*;
+import java.util.*;
+import java.util.List;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+public class LanControl {
+    static final String VERSION="1.6.0",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
+    static final int PORT=45851, MAX=8*1024*1024;
+    static volatile boolean justUpdated;
+    static final Color BG=Ui.BG, PANEL=Ui.SURFACE, TEXT=Ui.TEXT;
+    static final ExecutorService WORK=Executors.newCachedThreadPool(LanControl::daemon);
+    static Thread daemon(Runnable r){Thread t=new Thread(r);t.setDaemon(true);return t;}
+    static void later(Runnable r){SwingUtilities.invokeLater(r);}
+    static String message(Throwable e){
+        Throwable t=e;while((t instanceof CompletionException||t instanceof ExecutionException)&&t.getCause()!=null)t=t.getCause();
+        return t.getMessage()==null||t.getMessage().isBlank()?t.getClass().getSimpleName():t.getMessage();
+    }
+    static void error(Component c,Exception e){later(()->JOptionPane.showMessageDialog(c,message(e),"Koneksi / aplikasi",JOptionPane.ERROR_MESSAGE));}
+    static void theme(){Ui.install();}
+    static JButton button(String s,Runnable r){return Ui.button(s,r);}
+    static JFrame window(String title){JFrame f=new JFrame(title);f.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);f.setMinimumSize(new Dimension(700,450));return f;}
+    static byte[] command(String s){return s.getBytes(java.nio.charset.StandardCharsets.UTF_8);}
+    static String string(byte[] b){return new String(b,java.nio.charset.StandardCharsets.UTF_8);}
+    static class BadCodeException extends IOException {BadCodeException(){super("Kode koneksi utama dan klien berbeda.");}}
+    static class BusyException extends IOException {BusyException(){super("Klien sedang dikontrol komputer utama lain, atau sesi lama belum berakhir.");}}
+    static String connectionReason(Exception e){
+        if(e instanceof javax.crypto.AEADBadTagException||e instanceof BadCodeException)return "Kode koneksi utama dan klien berbeda.";
+        if(e instanceof BusyException)return e.getMessage();
+        if(e instanceof java.io.EOFException)return "Klien menutup koneksi. Pastikan versi sama, kode sama, dan klien sedang berbagi.";
+        if(e instanceof java.net.ConnectException)return "Klien belum berbagi atau port ditolak. Periksa IP dan izin firewall Java.";
+        if(e instanceof java.net.SocketTimeoutException)return "Koneksi melewati batas waktu. Periksa jaringan, IP, dan firewall.";
+        if(e instanceof java.net.UnknownHostException)return "Alamat IP/nama komputer tidak dikenal.";
+        if(e instanceof java.net.NoRouteToHostException)return "Komputer tidak terjangkau. Periksa apakah klien menyala dan di jaringan yang sama.";
+        return message(e);
+    }
+
+    // Per-session salt creates a new key; fixed direction prefixes and counters prevent nonce reuse.
+    static class Wire implements Closeable {
+        final Socket socket;final DataInputStream in;final DataOutputStream out;final SecretKey key;
+        final int tx,rx;long sent=0,received=0;
+        Wire(Socket s,String password,boolean server)throws Exception{
+            socket=s;s.setTcpNoDelay(true);s.setSoTimeout(15000);
+            in=new DataInputStream(s.getInputStream());out=new DataOutputStream(s.getOutputStream());
+            byte[] salt=new byte[32];
+            if(server){new SecureRandom().nextBytes(salt);out.write(salt);out.flush();}else in.readFully(salt);
+            PBEKeySpec spec=new PBEKeySpec(password.toCharArray(),salt,120000,256);
+            key=new SecretKeySpec(SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).getEncoded(),"AES");spec.clearPassword();
+            tx=server?1:2;rx=server?2:1;
+        }
+        static byte[] nonce(int direction,long counter){return ByteBuffer.allocate(12).putInt(direction).putLong(counter).array();}
+        synchronized void send(byte[] data)throws Exception{
+            if(data.length>MAX-16)throw new IOException("Gambar terlalu besar");
+            Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.ENCRYPT_MODE,key,new GCMParameterSpec(128,nonce(tx,sent++)));
+            byte[] b=cipher.doFinal(data);out.writeInt(b.length);out.write(b);out.flush();
+        }
+        /** A zero-length packet tells the other side that the connection code did not match. */
+        synchronized void rejectCode(){try{out.writeInt(0);out.flush();}catch(IOException ignored){}}
+        byte[] read()throws Exception{
+            int n=in.readInt();if(n==0)throw new BadCodeException();if(n<16||n>MAX)throw new IOException("Paket tidak valid");
+            byte[] b=new byte[n];in.readFully(b);
+            Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.DECRYPT_MODE,key,new GCMParameterSpec(128,nonce(rx,received++)));return cipher.doFinal(b);
+        }
+        public void close(){try{socket.close();}catch(IOException ignored){}}
+    }
+    /** Controller side: connect, authenticate and confirm that the client accepted this session. */
+    static Wire dial(String host,int port,String password,int timeout)throws Exception{
+        Socket s=new Socket();
+        try{s.connect(new InetSocketAddress(host,port),timeout);Wire w=new Wire(s,password,false);w.send(command(HELLO));String reply=string(w.read());
+            if(reply.equals(BUSY))throw new BusyException();
+            if(!reply.equals(READY))throw new IOException("Gunakan versi terbaru yang sama pada utama dan klien.");
+            return w;
+        }catch(Exception e){try{s.close();}catch(IOException ignored){}throw e;}
+    }
+    interface Session {void run(Socket socket,Wire wire)throws Exception;}
+    /** Client side: one active controller; later controllers get BUSY instead of waiting silently. Wrong codes get an explicit rejection. */
+    static void serve(ServerSocket server,String password,java.util.function.BooleanSupplier active,Session session)throws IOException{
+        AtomicBoolean busy=new AtomicBoolean();
+        while(active.getAsBoolean()&&!server.isClosed()){
+            Socket s=server.accept();
+            WORK.submit(()->{boolean mine=false;
+                try(Wire w=new Wire(s,password,true)){
+                    String hello;try{hello=string(w.read());}catch(AEADBadTagException wrong){w.rejectCode();return;}
+                    if(!hello.equals(HELLO))return;
+                    mine=busy.compareAndSet(false,true);if(!mine){w.send(command(BUSY));return;}
+                    w.send(command(READY));session.run(s,w);
+                }catch(Exception ignored){}
+                finally{if(mine)busy.set(false);try{s.close();}catch(IOException ignored){}}
+            });
+        }
+    }
+    static class Input {
+        final FrameCache frameCache=new FrameCache();final Robot robot;Robot captureRobot;volatile Rectangle screen;final Set<Integer> keys=new HashSet<>(),buttons=new HashSet<>();
+        Input()throws Exception{robot=new Robot();captureRobot=new Robot();robot.setAutoDelay(0);robot.setAutoWaitForIdle(false);screen=GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDefaultConfiguration().getBounds();}
+        synchronized void release(){for(int k:keys)try{robot.keyRelease(k);}catch(RuntimeException ignored){}for(int b:buttons)robot.mouseRelease(b);keys.clear();buttons.clear();}
+        synchronized void apply(String msg){
+            try{
+                String[] p=msg.split(" ");
+                switch(p[0]){
+                    case "MOVE":double x=Double.parseDouble(p[1]),y=Double.parseDouble(p[2]);if(!Double.isFinite(x)||!Double.isFinite(y))return;
+                        Rectangle bounds=currentBounds();robot.mouseMove(bounds.x+(int)(Math.max(0,Math.min(1,x))*(bounds.width-1)),bounds.y+(int)(Math.max(0,Math.min(1,y))*(bounds.height-1)));break;
+                    case "DOWN":int b=Integer.parseInt(p[1]);if(b==1024||b==2048||b==4096){buttons.add(b);robot.mousePress(b);}break;
+                    case "UP":b=Integer.parseInt(p[1]);if(buttons.remove(b))robot.mouseRelease(b);break;
+                    case "KEYDOWN":int k=Integer.parseInt(p[1]);if(k>0&&k<65536){robot.keyPress(k);keys.add(k);}break;
+                    case "KEYUP":k=Integer.parseInt(p[1]);if(keys.remove(k))robot.keyRelease(k);break;
+                    case "WHEEL":robot.mouseWheel(Math.max(-10,Math.min(10,Integer.parseInt(p[1]))));break;
+                    case "RESET":release();break;
+                }
+            }catch(RuntimeException ignored){}
+        }
+        synchronized void chord(int key){boolean held=keys.contains(KeyEvent.VK_CONTROL);if(!held)robot.keyPress(KeyEvent.VK_CONTROL);try{robot.keyPress(key);robot.keyRelease(key);}finally{if(!held)robot.keyRelease(KeyEvent.VK_CONTROL);}}
+        Rectangle currentBounds(){return GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDefaultConfiguration().getBounds();}
+        byte[] frame(StreamQuality.State state)throws Exception{
+            Rectangle bounds=currentBounds();if(!bounds.equals(screen)){captureRobot=new Robot();screen=new Rectangle(bounds);}
+            return frameCache.encode(captureRobot.createScreenCapture(bounds),state);
+        }
+    }
+
+    static class Agent {
+        final JFrame f=window("LAN Control 5 — Klien");final JPasswordField password=new JPasswordField(24);
+        final JLabel status=new JLabel("Belum berbagi layar");volatile boolean active=false;volatile ServerSocket listener;volatile Wire current;
+        final boolean automatic;
+        Agent(boolean automatic){this(automatic,false);}
+        Agent(boolean automatic,boolean resume){this.automatic=automatic;
+            JPanel root=new JPanel(new BorderLayout(0,22));root.setBorder(BorderFactory.createEmptyBorder(26,28,24,28));
+            JPanel heading=Ui.transparent(new GridLayout(0,1,0,7));heading.add(Ui.label("LAN CONTROL 5",12,true,Ui.ACCENT));heading.add(Ui.label("Bagikan komputer ini",27,true,Ui.TEXT));heading.add(Ui.label("Klien v"+VERSION+"  /  Kontrol layar dan file melalui LAN atau Tailscale",13,false,Ui.MUTED));root.add(heading,BorderLayout.NORTH);
+            Ui.RoundPanel body=new Ui.RoundPanel(new BorderLayout(0,18));JPanel details=Ui.transparent(new GridLayout(0,1,0,9));
+            JLabel permission=Ui.label("Memeriksa izin Windows...",13,false,Ui.MUTED);details.add(permission);
+            WORK.submit(()->{try{boolean admin=RemoteServices.Startup.isAdmin();later(()->permission.setText(admin?"Izin: ADMINISTRATOR":"Izin: BIASA  /  Gunakan peluncur Admin untuk aplikasi administrator"));}catch(Exception e){later(()->permission.setText("Status izin Windows belum tersedia"));}});
+            details.add(Ui.label("Alamat komputer ini: "+addresses(),13,true,Ui.TEXT));details.add(Ui.label("Kode koneksi  /  minimal 12 karakter, sama dengan komputer utama",12,false,Ui.MUTED));
+            password.setPreferredSize(new Dimension(300,40));details.add(password);body.add(details,BorderLayout.NORTH);
+            JPanel actions=Ui.transparent(new GridLayout(0,1,0,9));actions.add(Ui.primary("Mulai berbagi layar & izinkan kontrol",this::start));actions.add(button("Hentikan berbagi / putuskan kontrol",this::stop));
+            actions.add(button("Aktifkan otomatis saat Windows login",()->startup(true)));actions.add(button("Aktifkan otomatis dengan izin administrator",this::startupAdmin));actions.add(button("Nonaktifkan otomatis saat login",()->startup(false)));body.add(actions);
+            JPanel bottom=Ui.transparent(new GridLayout(0,1,0,9));status.setForeground(Ui.ACCENT);bottom.add(status);bottom.add(Ui.label("Resolusi mengikuti jendela kontrol. Kualitas dapat dipilih di komputer utama.",12,false,Ui.MUTED));body.add(bottom,BorderLayout.SOUTH);
+            root.add(body);root.add(Ui.label("Biarkan klien terbuka  /  Port TCP "+PORT+"  /  Tombol hentikan selalu tersedia",12,false,Ui.MUTED),BorderLayout.SOUTH);
+            f.add(root);f.setSize(900,690);f.setLocationRelativeTo(null);f.setVisible(true);
+            if(resume&&!automatic)WORK.submit(()->{try{Properties saved=Updater.takeResume();String code=saved==null?null:Updater.code(saved);if(code!=null)later(()->{password.setText(code);start();status.setText("Diperbarui ke v"+VERSION+"  /  Menunggu kontrol utama...");});}catch(Exception e){error(f,new Exception("Isi kode lagi lalu klik Mulai berbagi: "+message(e)));}});
+            if(automatic)WORK.submit(()->{try{String code=RemoteServices.Startup.load();later(()->{password.setText(code);start();});}catch(Exception e){error(f,new Exception("Startup otomatis gagal: "+message(e)));}});
+        }
+        void startupAdmin(){String code=new String(password.getPassword());WORK.submit(()->{try{RemoteServices.Startup.enableAdmin(code);later(()->{JOptionPane.showMessageDialog(f,"Startup administrator aktif untuk akun Windows ini. Klien akan tampil dan berbagi setelah login. Folder aplikasi harus tetap di lokasi ini. Nonaktifkan melalui klien administrator.");start();});}catch(Exception e){error(f,e);}});}
+        void startup(boolean enable){String code=new String(password.getPassword());WORK.submit(()->{try{if(enable)RemoteServices.Startup.enable(code);else RemoteServices.Startup.disable();later(()->{JOptionPane.showMessageDialog(f,enable?"Klien akan terbuka dan berbagi otomatis saat akun Windows ini login. Simpan folder aplikasi di lokasi ini. Untuk mengganti kode, aktifkan ulang dengan kode baru.":"Startup otomatis dinonaktifkan. Klik Hentikan berbagi untuk menghentikan sesi sekarang.");if(enable)start();});}catch(Exception e){error(f,e);}});}
+        /** IPv4 addresses, skipping automatic 169.254.x.x addresses that cannot be used for control. */
+        static String addresses(){List<String>a=new ArrayList<>();try{for(NetworkInterface nic:Collections.list(NetworkInterface.getNetworkInterfaces()))if(nic.isUp()&&!nic.isLoopback())for(InetAddress ip:Collections.list(nic.getInetAddresses()))if(ip instanceof Inet4Address&&!ip.isLinkLocalAddress())a.add(ip.getHostAddress());}catch(Exception ignored){}return a.isEmpty()?"(tidak ada jaringan aktif)":String.join(" / ",a);}
+        void stop(){active=false;Wire w=current;if(w!=null)w.close();try{if(listener!=null)listener.close();}catch(Exception ignored){}status.setText("Berbagi dihentikan");password.setEnabled(true);}
+        void start(){if(active)return;String pass=new String(password.getPassword());if(pass.length()<12){error(f,new Exception("Gunakan kode minimal 12 karakter."));return;}
+            try{listener=new ServerSocket(PORT);}catch(BindException e){error(f,new Exception("Port "+PORT+" sudah dipakai. Kemungkinan klien LAN Control lain sudah berjalan di komputer ini (misalnya dari startup otomatis). Tutup klien lain tersebut atau gunakan jendela yang sudah terbuka."));return;}catch(Exception e){error(f,e);return;}
+            active=true;password.setEnabled(false);status.setText("Menunggu kontrol utama...");ServerSocket server=listener;
+            WORK.submit(()->{try{Input input=new Input();serve(server,pass,()->active,(s,w)->session(s,w,input));}
+                catch(Exception e){if(active)error(f,e);}finally{try{server.close();}catch(Exception ignored){}later(()->{if(listener==server)stop();});}});
+        }
+        /** Called after the master pushed a verified newer JAR: restart with the same mode; the master reconnects by itself. */
+        void restartForUpdate(){String code=new String(password.getPassword());status.setText("Memasang pembaruan, klien mulai ulang...");
+            WORK.submit(()->{try{List<String> args=new ArrayList<>(List.of("client"));if(automatic)args.add("--auto");else {Updater.stash(code,Map.of());args.add("--resume");}
+                    Updater.restart(args);later(()->{stop();System.exit(0);});}
+                catch(Exception e){error(f,new Exception("Pembaruan otomatis gagal: "+message(e)));}});}
+        void session(Socket s,Wire w,Input input)throws Exception{
+            current=w;s.setSoTimeout(10000);String host=s.getInetAddress().getHostAddress();later(()->status.setText("Akses layar & file oleh "+host));
+            // File RPCs run on their own ordered worker so transfers and folder listings never delay mouse/keyboard input.
+            ExecutorService files=Executors.newSingleThreadExecutor(LanControl::daemon),clipboard=Executors.newSingleThreadExecutor(LanControl::daemon);
+            try(RemoteServices services=new RemoteServices()){
+                services.onUpdate=()->WORK.submit(()->{try{Thread.sleep(600);}catch(InterruptedException ignored){}later(this::restartForUpdate);});
+                StreamQuality.State stream=new StreamQuality.State();input.frameCache.clear();
+                Future<?> video=WORK.submit(()->{try{while(active&&!s.isClosed()){
+                    if(!stream.ready.tryAcquire(10,TimeUnit.SECONDS))throw new IOException("Pratinjau tidak dikonfirmasi");
+                    stream.begin();w.send(input.frame(stream));Thread.sleep(stream.pause());
+                }}catch(Exception e){w.close();}});
+                try{while(active&&!s.isClosed()){String msg=string(w.read());
+                    if(msg.startsWith("RPC ")){if(clipboardRpc(msg))handleRpc(w,services,msg,input,clipboard);else files.execute(()->{try{handleRpc(w,services,msg,null,null);}catch(Exception e){w.close();}});}
+                    else if(msg.startsWith("VIDEO "))stream.configure(msg.split(" "));else if(msg.equals("VIDEO_ACK"))stream.ack();else {if(ControlQueue.input(msg))stream.interact();input.apply(msg);}}}
+                finally{video.cancel(true);files.shutdownNow();clipboard.shutdownNow();}
+            }finally{current=null;input.release();if(active)later(()->status.setText("Menunggu kontrol utama..."));}
+        }
+    }
+    static boolean clipboardRpc(String msg){String[] p=msg.split(" ",4);return p.length>=3&&(p[2].equals("COPY_TEXT")||p[2].equals("PASTE_TEXT"));}
+    static void handleRpc(Wire w,RemoteServices services,String msg)throws Exception{handleRpc(w,services,msg,null,null);}
+    static void handleRpc(Wire w,RemoteServices services,String msg,Input input,Executor async)throws Exception{
+        String[] parts=msg.split(" ",-1);if(parts.length<3)throw new IOException("RPC tidak valid");String id=parts[1];
+        try{List<String> args=new ArrayList<>();for(int i=3;i<parts.length;i++)args.add(parts[i].equals("-")?"":RemoteServices.un64(parts[i]));byte[] result;
+            if(parts[2].equals("COPY_TEXT")||parts[2].equals("PASTE_TEXT")){
+                if(input==null)throw new IOException("Input desktop tidak tersedia");
+                if(parts[2].equals("PASTE_TEXT")){TextClipboard.write(args.get(0));input.chord(KeyEvent.VK_V);result=command("OK");}
+                else {
+                    // Press Ctrl+C in key order, then wait for the application to publish its copy (slow apps need more than 200 ms).
+                    String before;try{before=TextClipboard.peek();}catch(Exception busy){before=null;}String previous=before;input.chord(KeyEvent.VK_C);
+                    Runnable finish=()->{try{reply(w,id,command(TextClipboard.awaitChange(previous,1200)));}catch(Exception e){fail(w,id,e);}};
+                    if(async==null)finish.run();else async.execute(finish);return;
+                }
+            }else result=services.execute(parts[2],args);
+            reply(w,id,result);}
+        catch(Exception e){fail(w,id,e);}
+    }
+    static void reply(Wire w,String id,byte[] result)throws Exception{w.send(command("RESULT "+id+" OK "+Base64.getEncoder().encodeToString(result)));}
+    static void fail(Wire w,String id,Exception e){try{w.send(command("RESULT "+id+" ERR "+RemoteServices.b64(message(e))));}catch(Exception broken){w.close();}}
+    static class Peer {
+        String videoConfig="";long frames=0,frameBytes=0,started=System.nanoTime();
+        final Wire wire;final ControlQueue queue=new ControlQueue();volatile boolean alive=true;final Card card;
+        /** Text known to be on both clipboards after the last sync. Ctrl+V only uploads master text when it changed. */
+        volatile String clipboardMark;
+        Peer(Wire w,Card c){wire=w;card=c;}
+        final ConcurrentHashMap<String,CompletableFuture<byte[]>> pending=new ConcurrentHashMap<>();
+        CompletableFuture<byte[]> request(String operation,String... args)throws Exception{
+            if(!alive)throw new IOException("Klien terputus.");String id=UUID.randomUUID().toString();CompletableFuture<byte[]> reply=new CompletableFuture<>();pending.put(id,reply);
+            StringBuilder msg=new StringBuilder("RPC "+id+" "+operation);for(String arg:args)msg.append(' ').append(arg.isEmpty()?"-":RemoteServices.b64(arg));send(msg.toString());
+            reply.orTimeout(30,TimeUnit.SECONDS).whenComplete((r,e)->pending.remove(id));return reply;
+        }
+        static boolean pushNeeded(String master,String mark){return master!=null&&!master.equals(mark);}
+        void shortcut(int key){
+            try{
+                if(key==KeyEvent.VK_C){
+                    request("COPY_TEXT").whenCompleteAsync((result,failure)->{if(!alive)return;
+                        if(failure!=null){String m=message(failure);
+                            // File/image copied on the client: keep it there. The next Ctrl+V on this client pastes it instead of old master text.
+                            if(m.contains(TextClipboard.NOT_TEXT)){try{clipboardMark=TextClipboard.peek();}catch(Exception ignored){}card.notice("File/gambar disalin di klien. Ctrl+V di klien ini akan menempelkannya.");}
+                            else error(card,new IOException("Clipboard gagal: "+m));return;}
+                        try{String text=string(result);TextClipboard.write(text);clipboardMark=text;card.notice("Teks klien disalin ke komputer utama.");}catch(Exception e){error(card,e);}},TextClipboard.TRANSFER);
+                    return;
+                }
+                String text=TextClipboard.peek();
+                if(pushNeeded(text,clipboardMark)){TextClipboard.validate(text);clipboardMark=text;
+                    request("PASTE_TEXT",text).whenComplete((r,failure)->{if(failure!=null&&alive){clipboardMark=null;error(card,new IOException("Tempel gagal: "+message(failure)));}});}
+                else {send("KEYDOWN "+KeyEvent.VK_CONTROL);send("KEYDOWN "+KeyEvent.VK_V);send("KEYUP "+KeyEvent.VK_V);}
+            }catch(Exception e){error(card,e);}
+        }
+        byte[] rpc(String operation,String... args)throws Exception{
+            try{return request(operation,args).get(30,TimeUnit.SECONDS);}catch(ExecutionException e){throw new IOException(message(e));}
+        }
+        void send(String s){if(alive&&!queue.offer(s))close();}
+        void close(){alive=false;wire.close();pending.values().forEach(p->p.completeExceptionally(new IOException("Klien terputus.")));pending.clear();}
+        void start(){
+            WORK.submit(()->{try{while(alive){String s=queue.poll(2000);wire.send(command(s==null?"PING":s));}}catch(Exception e){close();}});
+            WORK.submit(()->{try{while(alive){byte[] data=wire.read();if(Arrays.equals(data,command("FRAME_SAME"))){send("VIDEO_ACK");continue;}if(data.length>7&&data[0]=='R'){String[] p=string(data).split(" ",4);if(p.length==4&&p[0].equals("RESULT")){CompletableFuture<byte[]> task=pending.get(p[1]);if(task!=null){byte[] result=Base64.getDecoder().decode(p[3]);if(p[2].equals("OK"))task.complete(result);else task.completeExceptionally(new IOException(string(result)));}continue;}}BufferedImage image=ImageIO.read(new ByteArrayInputStream(data));if(image==null)throw new IOException("Gambar tidak valid");card.prepareViews(image);card.image=image;frames++;frameBytes=data.length;send("VIDEO_ACK");later(card::refreshViews);}}catch(Exception e){}finally{close();later(()->{if(card.peer==this){card.peer=null;card.image=null;card.lost();card.refreshViews();}});}});
+        }
+    }
+    interface Sender {void send(String s);}
+    /** Special key combinations the master's own Windows would otherwise intercept. */
+    static final String[] COMBO_NAMES={"Tombol Windows  (menu Start)","Win + D  (tampilkan desktop)","Win + E  (File Explorer)","Win + R  (Run)","Win + Shift + S  (potong layar)","Alt + Tab  (ganti jendela)","Alt + F4  (tutup jendela aktif di klien)","Ctrl + Shift + Esc  (Task Manager)","Print Screen"};
+    static final int[][] COMBOS={{KeyEvent.VK_WINDOWS},{KeyEvent.VK_WINDOWS,KeyEvent.VK_D},{KeyEvent.VK_WINDOWS,KeyEvent.VK_E},{KeyEvent.VK_WINDOWS,KeyEvent.VK_R},{KeyEvent.VK_WINDOWS,KeyEvent.VK_SHIFT,KeyEvent.VK_S},{KeyEvent.VK_ALT,KeyEvent.VK_TAB},{KeyEvent.VK_ALT,KeyEvent.VK_F4},{KeyEvent.VK_CONTROL,KeyEvent.VK_SHIFT,KeyEvent.VK_ESCAPE},{KeyEvent.VK_PRINTSCREEN}};
+    static void combo(Sender sender,int... keys){for(int k:keys)sender.send("KEYDOWN "+k);for(int i=keys.length-1;i>=0;i--)sender.send("KEYUP "+keys[i]);}
+    static JButton shortcutsButton(String text,java.util.function.Supplier<Sender> target,Runnable after){
+        JPopupMenu menu=new JPopupMenu();JButton[] holder=new JButton[1];
+        for(int i=0;i<COMBOS.length;i++){int[] keys=COMBOS[i];JMenuItem item=new JMenuItem(COMBO_NAMES[i]);item.addActionListener(e->{Sender s=target.get();if(s!=null){combo(s,keys);after.run();}});menu.add(item);}
+        menu.addSeparator();JMenuItem cad=new JMenuItem("Ctrl + Alt + Del  (tidak didukung: layar aman Windows)");cad.setEnabled(false);menu.add(cad);
+        JMenuItem reset=new JMenuItem("Lepaskan semua tombol");reset.addActionListener(e->{Sender s=target.get();if(s!=null){s.send("RESET");after.run();}});menu.add(reset);
+        holder[0]=button(text,()->menu.show(holder[0],0,holder[0].getHeight()));holder[0].setToolTipText("Kirim kombinasi tombol yang tidak dapat diteruskan langsung dari keyboard komputer utama");return holder[0];
+    }
+    static class View extends JPanel implements Scrollable {
+        final java.util.function.Supplier<BufferedImage> source;final Sender sender;
+        Rectangle area=new Rectangle();boolean dragging=false;volatile boolean oneToOne=false,stretch=false;java.util.function.IntConsumer shortcut;java.util.function.BooleanSupplier escape=()->false;final Set<Integer> swallowed=new HashSet<>();
+        volatile int displayWidth,displayHeight;volatile Prepared prepared;double wheel=0;
+        record Prepared(BufferedImage source,int width,int height,BufferedImage scaled) {}
+        void prepare(BufferedImage frame){int w=displayWidth,h=displayHeight;if(oneToOne||w<1||h<1){prepared=null;return;}double scale=Math.min(w/(double)frame.getWidth(),h/(double)frame.getHeight());int width=stretch?w:Math.max(1,(int)(frame.getWidth()*scale)),height=stretch?h:Math.max(1,(int)(frame.getHeight()*scale));BufferedImage scaled=new BufferedImage(width,height,BufferedImage.TYPE_INT_RGB);Graphics2D g=scaled.createGraphics();g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_BILINEAR);g.drawImage(frame,0,0,width,height,null);g.dispose();prepared=new Prepared(frame,w,h,scaled);}
+        static boolean mainButton(MouseEvent e){return e.getButton()>=MouseEvent.BUTTON1&&e.getButton()<=MouseEvent.BUTTON3;}
+        View(java.util.function.Supplier<BufferedImage> source,Sender sender){this.source=source;this.sender=sender;setFocusable(true);setBackground(new Color(10,17,26));
+            addComponentListener(new ComponentAdapter(){public void componentResized(ComponentEvent e){displayWidth=getWidth();displayHeight=getHeight();prepared=null;}});
+            MouseAdapter m=new MouseAdapter(){
+                void move(MouseEvent e){if(area.contains(e.getPoint()))sender.send("MOVE "+((e.getX()-area.x)/(double)area.width)+" "+((e.getY()-area.y)/(double)area.height));}
+                public void mousePressed(MouseEvent e){if(!area.contains(e.getPoint())||source.get()==null)return;requestFocusInWindow();if(!mainButton(e))return;dragging=true;move(e);sender.send("DOWN "+InputEvent.getMaskForButton(e.getButton()));}
+                public void mouseReleased(MouseEvent e){if(dragging&&mainButton(e)){move(e);sender.send("UP "+InputEvent.getMaskForButton(e.getButton()));dragging=false;}}
+                public void mouseMoved(MouseEvent e){if(hasFocus())move(e);}public void mouseDragged(MouseEvent e){move(e);}
+                // Touchpads report fractional rotation (getWheelRotation()==0); accumulate until a whole notch is reached.
+                public void mouseWheelMoved(MouseWheelEvent e){if(!area.contains(e.getPoint()))return;wheel+=e.getPreciseWheelRotation();int notches=(int)wheel;if(notches!=0){wheel-=notches;sender.send("WHEEL "+notches);}}
+            };addMouseListener(m);addMouseMotionListener(m);addMouseWheelListener(m);
+            addKeyListener(new KeyAdapter(){public void keyPressed(KeyEvent e){int k=e.getKeyCode();
+                if(k==KeyEvent.VK_ESCAPE&&escape.getAsBoolean()){swallowed.add(k);}
+                else if(swallowed.contains(k)){}
+                else if(shortcut!=null&&e.isControlDown()&&!e.isAltDown()&&!e.isShiftDown()&&(k==KeyEvent.VK_C||k==KeyEvent.VK_V)){swallowed.add(k);shortcut.accept(k);}
+                else if(k!=KeyEvent.VK_UNDEFINED)sender.send("KEYDOWN "+k);e.consume();}
+                public void keyReleased(KeyEvent e){if(!swallowed.remove(e.getKeyCode()))sender.send("KEYUP "+e.getKeyCode());e.consume();}});
+            setFocusTraversalKeysEnabled(false);addFocusListener(new FocusAdapter(){public void focusLost(FocusEvent e){dragging=false;swallowed.clear();wheel=0;sender.send("RESET");}});
+        }
+        public Dimension getPreferredScrollableViewportSize(){return new Dimension(800,500);}
+        public int getScrollableUnitIncrement(Rectangle visible,int orientation,int direction){return 24;}
+        public int getScrollableBlockIncrement(Rectangle visible,int orientation,int direction){return Math.max(24,(orientation==SwingConstants.HORIZONTAL?visible.width:visible.height)-24);}
+        public boolean getScrollableTracksViewportWidth(){return !oneToOne;}
+        public boolean getScrollableTracksViewportHeight(){return !oneToOne;}
+        public Dimension getPreferredSize(){BufferedImage im=source.get();return oneToOne&&im!=null?new Dimension(im.getWidth(),im.getHeight()):new Dimension(440,230);}
+        protected void paintComponent(Graphics graphics){super.paintComponent(graphics);Graphics2D g=(Graphics2D)graphics.create();g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);BufferedImage im=source.get();
+            if(im==null){area=new Rectangle();int cx=getWidth()/2,cy=getHeight()/2;
+                g.setColor(Ui.LINE);g.setStroke(new BasicStroke(2));g.drawRoundRect(cx-24,cy-42,48,32,7,7);g.drawLine(cx,cy-10,cx,cy-2);g.drawLine(cx-12,cy-2,cx+12,cy-2);
+                g.setColor(Ui.MUTED);g.setFont(new Font(Ui.FONT,Font.PLAIN,13));String t="Siap dihubungkan";g.drawString(t,cx-g.getFontMetrics().stringWidth(t)/2,cy+25);g.dispose();return;}
+            double scale=oneToOne?1:Math.min(getWidth()/(double)im.getWidth(),getHeight()/(double)im.getHeight());int w=stretch&&!oneToOne?getWidth():Math.max(1,(int)(im.getWidth()*scale)),h=stretch&&!oneToOne?getHeight():Math.max(1,(int)(im.getHeight()*scale));
+            area=new Rectangle(Math.max(0,(getWidth()-w)/2),Math.max(0,(getHeight()-h)/2),w,h);
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_BILINEAR);g.setRenderingHint(RenderingHints.KEY_RENDERING,RenderingHints.VALUE_RENDER_QUALITY);
+            Prepared ready=prepared;if(!oneToOne&&ready!=null&&ready.source()==im&&ready.width()==getWidth()&&ready.height()==getHeight())g.drawImage(ready.scaled(),area.x,area.y,w,h,null);else {g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_BILINEAR);g.drawImage(im,area.x,area.y,w,h,null);}if(hasFocus()){g.setColor(Ui.ACCENT);g.drawRect(0,0,getWidth()-1,getHeight()-1);}g.dispose();
+        }
+    }
+    static class Card extends Ui.RoundPanel {
+        final int number;final Controller owner;volatile Peer peer;volatile BufferedImage image;final JTextField ip=new JTextField(14);final JCheckBox selected=new JCheckBox("Pilih");
+        final JLabel title,status=Ui.label("Offline",12,true,Ui.MUTED),picture=Ui.label(" ",11,false,Ui.MUTED);final View view;
+        boolean connecting,wanted;volatile boolean expectRestart;int attempts;javax.swing.Timer retry;String name,note;long noticeUntil;
+        final List<View> largeViews=new CopyOnWriteArrayList<>();String mode="AUTO";
+        Card(int n,Controller owner){super(new BorderLayout(0,12));number=n;this.owner=owner;name="Komputer "+n;
+            JPanel head=Ui.transparent(new BorderLayout());JPanel identity=Ui.transparent(new FlowLayout(FlowLayout.LEFT,9,0));identity.add(Ui.label(String.format("%02d",n),13,true,Ui.ACCENT));
+            title=Ui.label(name,16,true,Ui.TEXT);title.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));title.setToolTipText("Klik untuk mengganti nama komputer ini");title.addMouseListener(new MouseAdapter(){public void mouseClicked(MouseEvent e){rename();}});identity.add(title);head.add(identity);
+            selected.setOpaque(false);JPanel choose=Ui.transparent(new FlowLayout(FlowLayout.RIGHT,6,0));choose.add(button("Fokus",()->owner.focus(this)));choose.add(selected);head.add(choose,BorderLayout.EAST);
+            JPanel address=Ui.transparent(new BorderLayout(8,0));ip.setToolTipText("IP LAN atau Tailscale klien");ip.addActionListener(e->connect());address.add(ip);JPanel connect=Ui.transparent(new GridLayout(1,2,6,0));connect.add(Ui.primary("Hubungkan",this::connect));connect.add(button("Putus",this::disconnect));address.add(connect,BorderLayout.EAST);
+            JPanel upper=Ui.transparent(new BorderLayout(0,12));upper.add(head,BorderLayout.NORTH);upper.add(address);add(upper,BorderLayout.NORTH);
+            view=new View(()->image,msg->{Peer p=peer;if(p!=null)p.send(msg);});view.shortcut=key->{Peer p=peer;if(p!=null)p.shortcut(key);};add(view);
+            JPanel footer=Ui.transparent(new BorderLayout(8,0));JPanel info=Ui.transparent(new GridLayout(0,1,0,4));info.add(status);info.add(picture);footer.add(info);
+            JPanel actions=Ui.transparent(new FlowLayout(FlowLayout.RIGHT,6,0));
+            actions.add(shortcutsButton("Pintasan",()->{Peer p=peer;if(p==null){error(owner.f,new Exception("Hubungkan klien terlebih dahulu."));return null;}return p::send;},view::requestFocusInWindow));
+            actions.add(button("File & akses",()->{if(peer==null)error(owner.f,new Exception("Hubungkan klien terlebih dahulu."));else new RemoteTools(this);}));actions.add(button("Perbesar",()->owner.open(this,false)));footer.add(actions,BorderLayout.EAST);add(footer,BorderLayout.SOUTH);
+            selected.addActionListener(e->{Peer p=peer;if(p!=null)p.send("RESET");});
+        }
+        void applyName(String s){name=s==null||s.isBlank()?"Komputer "+number:s.trim();title.setText(name);}
+        void rename(){String s=(String)JOptionPane.showInputDialog(owner.f,"Nama untuk komputer "+number+" (contoh: Kasir, Lab-02):","Ganti nama",JOptionPane.PLAIN_MESSAGE,null,null,name);if(s!=null){applyName(s);owner.save();}}
+        void notice(String text){later(()->{picture.setText(text);noticeUntil=System.currentTimeMillis()+5000;});}
+        void prepareViews(BufferedImage frame){if(largeViews.isEmpty()&&view.isShowing())view.prepare(frame);for(View v:largeViews)if(v.isShowing())v.prepare(frame);}
+        void refreshViews(){view.repaint();for(View v:largeViews){if(v.oneToOne)v.revalidate();v.repaint();}}
+        void updateStream(){Peer p=peer;if(p==null){if(image==null&&!connecting&&retry==null&&note==null&&System.currentTimeMillis()>noticeUntil)picture.setText(" ");picture.setToolTipText(picture.getText().isBlank()?null:picture.getText());return;}int w=view.getWidth(),h=view.getHeight();
+            for(View v:largeViews)if(v.isShowing()){Dimension d=v.oneToOne?new Dimension(3840,2160):v.getSize();if((long)d.width*d.height>(long)w*h){w=d.width;h=d.height;}}
+            if(view.getGraphicsConfiguration()!=null){double dpi=view.getGraphicsConfiguration().getDefaultTransform().getScaleX();w=(int)(w*dpi);h=(int)(h*dpi);}
+            boolean enlarged=largeViews.stream().anyMatch(v->v.isShowing()&&!(SwingUtilities.getWindowAncestor(v) instanceof Frame frame&&(frame.getExtendedState()&Frame.ICONIFIED)!=0));
+            boolean focusedPreview=!enlarged&&view.isShowing()&&view.getHeight()>=300;
+            boolean visible=enlarged||(view.isShowing()&&!view.getVisibleRect().isEmpty()&&!(SwingUtilities.getWindowAncestor(view) instanceof Frame frame&&(frame.getExtendedState()&Frame.ICONIFIED)!=0));
+            String config="VIDEO "+((enlarged||focusedPreview)?mode:"PREVIEW")+" "+Math.max(320,w)+" "+Math.max(180,h)+" "+(visible?(enlarged?120:focusedPreview?220:300):1000);if(!config.equals(p.videoConfig)){p.videoConfig=config;p.send(config);}
+            BufferedImage im=image;if(im!=null&&System.currentTimeMillis()>noticeUntil){double seconds=(System.nanoTime()-p.started)/1e9;picture.setText(im.getWidth()+" × "+im.getHeight()+"  /  "+String.format(java.util.Locale.ROOT,"%.1f fps",p.frames/Math.max(1,seconds))+"  /  "+modeLabel(mode));}
+        }
+        void connect(){wanted=true;attempts=0;stopRetry();open(false,false);}
+        /** Used by "Hubungkan semua" and the launch auto-connect: errors stay on the card instead of popping up. */
+        void connectQuietly(boolean retryOnFail){if(ip.getText().trim().isEmpty()||peer!=null||connecting)return;wanted=true;attempts=0;stopRetry();open(true,retryOnFail);}
+        void disconnect(){wanted=false;attempts=0;stopRetry();note=null;Peer p=peer;if(p!=null)p.close();else if(!connecting){status.setText("Offline");status.setForeground(Ui.MUTED);picture.setText(" ");}}
+        void stopRetry(){if(retry!=null){retry.stop();retry=null;}}
+        void lost(){if(wanted&&(owner.reconnect.isSelected()||expectRestart))scheduleRetry(expectRestart?"Klien mulai ulang untuk pembaruan.":"Koneksi terputus.");else {status.setText("Terputus");status.setForeground(Ui.MUTED);}}
+        void scheduleRetry(String reason){stopRetry();attempts++;int seconds=Math.min(15,1+2*attempts);note=reason;
+            status.setText("Menyambung ulang dalam "+seconds+" dtk  (percobaan "+attempts+")");status.setForeground(Ui.WARN);picture.setText(reason);
+            retry=new javax.swing.Timer(seconds*1000,e->{retry=null;if(wanted&&peer==null)open(true,true);});retry.setRepeats(false);retry.start();}
+        void open(boolean silent,boolean retryOnFail){
+            if(connecting||peer!=null)return;String host=ip.getText().trim(),pass=new String(owner.password.getPassword());
+            if(host.isEmpty()||pass.length()<12){wanted=false;if(!silent)error(owner.f,new Exception("Isi IP klien dan kode minimal 12 karakter."));else {status.setText("Isi IP dan kode");status.setForeground(Ui.WARN);}return;}
+            connecting=true;status.setText("Menghubungkan...");status.setForeground(Ui.ACCENT);int port=owner.port;
+            WORK.submit(()->{try{Wire w=dial(host,port,pass,5000);Peer p=new Peer(w,this);
+                    later(()->{connecting=false;if(!wanted){p.close();status.setText("Offline");status.setForeground(Ui.MUTED);return;}peer=p;attempts=0;note=null;expectRestart=false;status.setText("Online • "+host);status.setForeground(Ui.ACCENT);p.start();updateStream();owner.save();owner.checkVersion(this,p,host);});}
+                catch(Exception e){String reason=connectionReason(e);boolean fatal=e instanceof BadCodeException;
+                    later(()->{connecting=false;if(!wanted)return;
+                        if(retryOnFail&&!fatal&&(owner.reconnect.isSelected()||expectRestart)){scheduleRetry(reason);return;}
+                        wanted=false;note=reason;status.setText("Koneksi gagal");status.setForeground(Ui.DANGER);picture.setText(reason);
+                        if(fatal)owner.alertOnce("Kode koneksi berbeda dengan klien. Periksa kode pada komputer utama dan klien.");
+                        else if(!silent)error(owner.f,new Exception("Gagal ke "+host+": "+reason));});}});
+        }
+    }
+    static final String[] MODES={"Otomatis","HD 1080p","Asli / teks","Hemat data"};
+    static final List<String> MODE_CODES=List.of("AUTO","HD","NATIVE","HEMAT");
+    static String modeCode(int index){return MODE_CODES.get(index);}
+    static String modeLabel(String mode){return switch(mode){case "HD"->"HD";case "NATIVE"->"Asli / teks";case "HEMAT"->"Hemat";default->"Otomatis";};}
+    /** Routes to each card's current peer, so open windows keep working after a reconnect. */
+    static Sender sender(List<Card> targets){return msg->{for(Card c:targets){Peer p=c.peer;if(p!=null)p.send(msg);}};}
+    static class Controller {
+        static final ExecutorService SETTINGS=Executors.newSingleThreadExecutor(LanControl::daemon);
+        final Ui.Grid grid=new Ui.Grid();JCheckBox focusLayout;final JCheckBox reconnect=new JCheckBox("Sambung ulang otomatis",true),remember=new JCheckBox("Ingat kode"),autoUpdate=new JCheckBox("Perbarui klien otomatis",true),onlineUpdate=new JCheckBox("Cek pembaruan internet",true);
+        final JPanel updateBar=Ui.transparent(new Ui.WrapLayout(FlowLayout.LEFT,8,2));final JLabel updateLabel=Ui.label(" ",13,true,Ui.WARN);javax.swing.Timer updateTimer;
+        volatile String pendingVersion;volatile long lastInput=System.currentTimeMillis();long postponeUntil,lastCheck,updatedUntil;int countdown=-1;boolean checking,installing,onlineChecking;long nextOnline=System.currentTimeMillis()+20_000;
+        final Set<String> pushed=ConcurrentHashMap.newKeySet();java.util.concurrent.Callable<byte[]> ownJar=()->java.nio.file.Files.readAllBytes(RemoteServices.Startup.jar());final JComboBox<String> quality=new JComboBox<>(MODES);
+        final JFrame f;final boolean preview;int port=PORT;final JPanel dashboard=new JPanel(new BorderLayout(0,12));final JPasswordField password=new JPasswordField(18);final List<Card> cards=new ArrayList<>();final Set<JFrame> remotes=new HashSet<>();final JLabel count=Ui.label("0 / 4 klien online",13,true,Ui.ACCENT);final javax.swing.Timer timer;
+        Path settingsFile=Settings.file("controller.properties");volatile String protectedCode;String protectedPlain;long alerted;
+        Controller(){this(false);}
+        Controller(boolean preview){this.preview=preview;
+            f=preview?null:window("LAN Control 5 v"+VERSION+" — Kontrol Utama");dashboard.setBorder(BorderFactory.createEmptyBorder(16,22,12,22));
+            JPanel heading=Ui.transparent(new BorderLayout());JPanel words=Ui.transparent(new GridLayout(0,1,0,6));words.add(Ui.label("LAN CONTROL 5  /  v"+VERSION,12,true,Ui.ACCENT));words.add(Ui.label("Ruang kontrol",29,true,Ui.TEXT));words.add(Ui.label("Semua komputer, satu tempat. Pilih klien untuk bekerja bersama.",13,false,Ui.MUTED));heading.add(words);heading.add(count,BorderLayout.EAST);
+            Ui.RoundPanel toolbar=new Ui.RoundPanel(new BorderLayout(18,4));toolbar.setBorder(BorderFactory.createEmptyBorder(8,10,8,10));
+            JPanel access=Ui.transparent(new Ui.WrapLayout(FlowLayout.LEFT,8,5));access.add(Ui.label("Kode koneksi",12,true,Ui.MUTED));password.setPreferredSize(new Dimension(180,36));access.add(password);
+            remember.setOpaque(false);remember.setToolTipText("Simpan kode terenkripsi (Windows DPAPI) agar klien tersambung otomatis saat aplikasi dibuka");remember.addActionListener(e->rememberCode());access.add(remember);
+            access.add(Ui.label("Kualitas",12,true,Ui.MUTED));quality.setPreferredSize(new Dimension(135,36));quality.addActionListener(e->{for(Card c:cards)c.mode=modeCode(quality.getSelectedIndex());save();});access.add(quality);
+            access.add(Ui.primary("Hubungkan semua",this::connectAll));access.add(button("Putus semua",()->cards.forEach(Card::disconnect)));toolbar.add(access,BorderLayout.NORTH);
+            password.addFocusListener(new FocusAdapter(){public void focusLost(FocusEvent e){if(remember.isSelected())rememberCode();}});
+            JPanel actions=Ui.transparent(new Ui.WrapLayout(FlowLayout.LEFT,8,5));actions.add(button("Pilih semua",()->cards.forEach(c->c.selected.setSelected(true))));actions.add(button("Batal pilih",()->cards.forEach(c->c.selected.setSelected(false))));actions.add(Ui.primary("Kontrol serentak",()->{Card c=cards.stream().filter(x->x.selected.isSelected()&&x.peer!=null).findFirst().orElse(null);if(c==null)error(f,new Exception("Hubungkan dan centang minimal satu klien."));else open(c,true);}));actions.add(button("Lepaskan tombol",this::reset));toolbar.add(actions,BorderLayout.CENTER);
+            JPanel top=Ui.transparent(new BorderLayout(0,12));top.add(heading,BorderLayout.NORTH);top.add(toolbar);dashboard.add(top,BorderLayout.NORTH);
+            updateBar.add(updateLabel);updateBar.add(Ui.primary("Mulai ulang sekarang",this::installUpdate));updateBar.add(button("Tunda 30 menit",()->{postponeUntil=System.currentTimeMillis()+30*60_000;countdown=-1;tickUpdate();}));updateBar.setVisible(false);top.add(updateBar,BorderLayout.SOUTH);
+            for(int i=1;i<=4;i++){Card c=new Card(i,this);cards.add(c);grid.add(c);}JScrollPane scroll=new JScrollPane(grid);scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);scroll.getViewport().setBackground(Ui.BG);scroll.getVerticalScrollBar().setUnitIncrement(28);dashboard.add(scroll);
+            dashboard.add(Ui.label("Klik layar untuk mengontrol  /  Perbesar untuk membaca detail  /  Ctrl+C dan Ctrl+V untuk teks  /  Klik nama komputer untuk mengganti nama",12,false,Ui.MUTED),BorderLayout.SOUTH);
+            focusLayout=new JCheckBox("Fokus klien aktif",true);focusLayout.setOpaque(false);focusLayout.setToolTipText("Pertahankan satu layar besar. Gunakan tombol Fokus untuk memilih klien.");focusLayout.addActionListener(e->{grid.focusEnabled=focusLayout.isSelected();grid.revalidate();grid.repaint();save();});actions.add(focusLayout);
+            autoUpdate.setOpaque(false);autoUpdate.setToolTipText("Saat terhubung, klien versi lama otomatis menerima versi komputer utama ini lalu mulai ulang.");autoUpdate.addActionListener(e->save());actions.add(autoUpdate);
+            onlineUpdate.setOpaque(false);onlineUpdate.setEnabled(!Updater.repository.isBlank());onlineUpdate.setToolTipText(Updater.repository.isBlank()?"Sumber pembaruan internet belum diatur di versi ini.":"Periksa rilis bertanda tangan di github.com/"+Updater.repository+" saat dibuka dan setiap 6 jam.");onlineUpdate.addActionListener(e->{save();nextOnline=0;});actions.add(onlineUpdate);
+            reconnect.setOpaque(false);reconnect.setToolTipText("Jika koneksi putus (Wi-Fi, restart klien), utama mencoba menyambung kembali sampai Anda klik Putus.");reconnect.addActionListener(e->{if(!reconnect.isSelected())for(Card c:cards)if(c.retry!=null){c.stopRetry();c.wanted=false;c.status.setText("Offline");c.status.setForeground(Ui.MUTED);}save();});actions.add(reconnect);
+            timer=new javax.swing.Timer(700,e->{grid.refreshFocus();count.setText(cards.stream().filter(c->c.peer!=null&&c.peer.alive).count()+" / 4 klien online");cards.forEach(Card::updateStream);});
+            if(!preview){Toolkit.getDefaultToolkit().addAWTEventListener(e->lastInput=System.currentTimeMillis(),AWTEvent.KEY_EVENT_MASK|AWTEvent.MOUSE_EVENT_MASK|AWTEvent.MOUSE_MOTION_EVENT_MASK|AWTEvent.MOUSE_WHEEL_EVENT_MASK);
+                if(justUpdated)updatedUntil=System.currentTimeMillis()+30_000;updateTimer=new javax.swing.Timer(1000,e->tickUpdate());updateTimer.start();load();f.addWindowListener(new WindowAdapter(){public void windowClosing(WindowEvent e){saveNow();}});f.add(dashboard);f.setSize(1400,1000);f.setLocationRelativeTo(null);f.setVisible(true);timer.start();}
+        }
+        void alertOnce(String text){long now=System.currentTimeMillis();if(now-alerted<5000)return;alerted=now;error(f,new Exception(text));}
+        void connectAll(){boolean any=false;for(Card c:cards)if(!c.ip.getText().trim().isEmpty()){any=true;c.connectQuietly(reconnect.isSelected());}
+            if(!any)error(f,new Exception("Isi IP minimal satu komputer terlebih dahulu."));else if(remember.isSelected())rememberCode();}
+        Properties snapshot(){Properties p=new Properties();
+            for(Card c:cards){p.setProperty("card."+c.number+".ip",c.ip.getText().trim());p.setProperty("card."+c.number+".name",c.name);}
+            p.setProperty("quality",modeCode(Math.max(0,quality.getSelectedIndex())));p.setProperty("focus",Boolean.toString(focusLayout.isSelected()));p.setProperty("reconnect",Boolean.toString(reconnect.isSelected()));p.setProperty("remember",Boolean.toString(remember.isSelected()));p.setProperty("autoUpdate",Boolean.toString(autoUpdate.isSelected()));p.setProperty("onlineUpdate",Boolean.toString(onlineUpdate.isSelected()));
+            String code=protectedCode;if(remember.isSelected()&&code!=null)p.setProperty("code",code);return p;}
+        boolean loading;
+        void save(){if(preview||loading)return;Properties p=snapshot();Path file=settingsFile;SETTINGS.submit(()->{try{Settings.save(file,p);}catch(IOException ignored){}});}
+        void saveNow(){if(preview)return;try{Settings.save(settingsFile,snapshot());}catch(IOException ignored){}}
+        void load(){loading=true;try{apply(Settings.load(settingsFile));}finally{loading=false;}
+            // After an automatic update: restore the typed code and reconnect the clients that were online.
+            Properties resume=Updater.takeResume();
+            if(resume!=null)SETTINGS.submit(()->{String code=null;try{code=Updater.code(resume);}catch(Exception ignored){}String restored=code;
+                later(()->{if(restored!=null&&password.getPassword().length==0)password.setText(restored);
+                    for(String n:resume.getProperty("cards","").split(","))try{int i=Integer.parseInt(n.trim())-1;if(i>=0&&i<cards.size())cards.get(i).connectQuietly(true);}catch(NumberFormatException ignored){}});});
+        }
+        void tickUpdate(){
+            long now=System.currentTimeMillis();
+            if(!checking&&!installing&&now-lastCheck>15_000){lastCheck=now;checking=true;WORK.submit(()->{String v=Updater.pending();later(()->{checking=false;if(v==null||!v.equals(pendingVersion))countdown=-1;pendingVersion=v;});});}
+            if(onlineUpdate.isSelected()&&onlineUpdate.isEnabled()&&!onlineChecking&&!installing&&now>=nextOnline){onlineChecking=true;nextOnline=now+6*3600_000L;
+                WORK.submit(()->{String result;boolean found=false;try{String got=Updater.checkOnline();found=got!=null;result=got==null?"Tidak ada versi baru di GitHub.":"Versi v"+got+" diunduh dan tanda tangannya cocok.";}
+                    catch(Exception e){result="Cek pembaruan internet gagal: "+message(e);}
+                    String text=result+" (terakhir dicek "+new java.text.SimpleDateFormat("HH:mm").format(new Date())+")";boolean staged=found;
+                    later(()->{onlineChecking=false;onlineUpdate.setToolTipText(text);if(staged)lastCheck=0;else if(text.contains("gagal"))nextOnline=System.currentTimeMillis()+30*60_000L;});});}
+            String v=pendingVersion;
+            if(v==null||installing){boolean recent=now<updatedUntil;updateBar.setVisible(recent||installing);if(recent&&!installing){updateLabel.setForeground(Ui.ACCENT);updateLabel.setText("Berhasil diperbarui ke v"+VERSION+".");for(Component c:updateBar.getComponents())if(c!=updateLabel)c.setVisible(false);}return;}
+            for(Component c:updateBar.getComponents())c.setVisible(true);updateBar.setVisible(true);updateLabel.setForeground(Ui.WARN);
+            boolean inUse=!remotes.isEmpty()||RemoteTools.anyBusy()||now<postponeUntil,idle=now-lastInput>=60_000;
+            if(!Updater.canRestart()){updateLabel.setText("Pembaruan v"+v+" ada di folder update. Tutup lalu buka aplikasi untuk memasang.");return;}
+            if(inUse||!idle){countdown=-1;updateLabel.setText("Pembaruan v"+v+" siap. "+(now<postponeUntil?"Ditunda; ":"")+"Mulai ulang otomatis setelah 1 menit tidak dipakai (jendela Perbesar/transfer ditutup).");return;}
+            countdown=countdown<0?30:countdown-1;updateLabel.setText("Pembaruan v"+v+": mulai ulang otomatis dalam "+countdown+" dtk. Gerakkan mouse untuk menunda.");if(countdown<=0)installUpdate();
+        }
+        /** Restart into the staged version; code and online clients are restored after the restart. */
+        void installUpdate(){
+            if(installing)return;if(pendingVersion==null){error(f,new Exception("Belum ada pembaruan di folder update."));return;}installing=true;updateLabel.setText("Memasang pembaruan v"+pendingVersion+"...");saveNow();
+            String code=new String(password.getPassword());StringBuilder online=new StringBuilder();for(Card c:cards)if(c.peer!=null||c.wanted){if(online.length()>0)online.append(',');online.append(c.number);}
+            WORK.submit(()->{try{Updater.stash(code,Map.of("cards",online.toString()));Updater.restart(List.of());later(()->System.exit(0));}
+                catch(Exception e){later(()->{installing=false;countdown=-1;postponeUntil=System.currentTimeMillis()+30*60_000;error(f,new Exception("Gagal memasang pembaruan: "+message(e)));});}});
+        }
+        /** Sends this master's own JAR to an older client (once per client and version). */
+        void checkVersion(Card card,Peer p,String host){
+            if(!autoUpdate.isSelected())return;
+            WORK.submit(()->{String version;try{version=string(p.rpc("VERSION"));}catch(Exception e){if(p.alive)card.notice("Klien versi lama: pasang v"+VERSION+" sekali secara manual agar pembaruan otomatis aktif.");return;}
+                if(Updater.compare(VERSION,version)<=0)return;byte[] jar;try{jar=ownJar.call();}catch(Exception e){return;}
+                if(!pushed.add(host+" "+VERSION)){card.notice("Klien masih v"+version+". Pembaruan otomatis gagal; perbarui manual.");return;}
+                try{card.expectRestart=true;Updater.push(p,jar,VERSION,(done,total)->card.notice("Mengirim pembaruan v"+VERSION+" ke klien: "+(done*100/total)+"%"));card.notice("Klien memasang v"+VERSION+" dan mulai ulang...");}
+                catch(Exception e){card.expectRestart=false;if(p.alive)card.notice("Pembaruan klien gagal: "+message(e));}});
+        }
+        void apply(Properties p){
+            for(Card c:cards){c.ip.setText(p.getProperty("card."+c.number+".ip",""));c.applyName(p.getProperty("card."+c.number+".name",""));}
+            int q=MODE_CODES.indexOf(p.getProperty("quality","AUTO"));quality.setSelectedIndex(Math.max(0,q));
+            focusLayout.setSelected(!"false".equals(p.getProperty("focus")));grid.focusEnabled=focusLayout.isSelected();reconnect.setSelected(!"false".equals(p.getProperty("reconnect")));remember.setSelected("true".equals(p.getProperty("remember")));autoUpdate.setSelected(!"false".equals(p.getProperty("autoUpdate")));onlineUpdate.setSelected(!"false".equals(p.getProperty("onlineUpdate")));
+            String code=p.getProperty("code");
+            if(remember.isSelected()&&code!=null&&!preview)SETTINGS.submit(()->{try{String plain=RemoteServices.un64(RemoteServices.Startup.protect(code,false));
+                    later(()->{protectedCode=code;protectedPlain=plain;if(password.getPassword().length==0){password.setText(plain);if(reconnect.isSelected())connectAll();}});}
+                catch(Exception e){later(()->{protectedCode=null;count.setText("Kode tersimpan tidak bisa dibuka. Isi kode lagi.");});}});
+        }
+        /** Stores the code protected by Windows DPAPI for this Windows account. Never written as plain text. */
+        void rememberCode(){
+            if(!remember.isSelected()){protectedCode=null;protectedPlain=null;save();return;}
+            String code=new String(password.getPassword());if(code.length()<12||code.equals(protectedPlain)){save();return;}
+            protectedPlain=code;SETTINGS.submit(()->{try{String sealed=RemoteServices.Startup.protect(RemoteServices.b64(code),true);later(()->{if(code.equals(protectedPlain)){protectedCode=sealed;save();}});}
+                catch(Exception e){later(()->{protectedPlain=null;protectedCode=null;remember.setSelected(false);save();error(f,new Exception("Kode tidak dapat disimpan: "+message(e)));});}});
+        }
+        void focus(Card card){if(card.peer==null&&card.image==null){error(f,new IOException("Hubungkan klien ini sebelum memilih fokus."));return;}grid.preferredFocus=card;grid.focusEnabled=true;focusLayout.setSelected(true);grid.refreshFocus();grid.revalidate();grid.repaint();later(()->{card.scrollRectToVisible(new Rectangle(0,0,card.getWidth(),Math.min(card.getHeight(),400)));});}
+        void reset(){for(Card c:cards)if(c.peer!=null)c.peer.send("RESET");}
+        void open(Card source,boolean group){
+            if(source.peer==null){error(f,new Exception("Klien belum terhubung."));return;}
+            List<Card> targets=new ArrayList<>();if(group){for(Card c:cards)if(c.selected.isSelected()&&c.peer!=null)targets.add(c);}else targets.add(source);
+            String label=group?targets.size()+" klien":source.name+"  ("+source.ip.getText().trim()+")";
+            JFrame remote=new JFrame(group?"Kontrol serentak — "+label:"Kontrol individual — "+label);remote.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);remote.setMinimumSize(new Dimension(800,550));
+            Sender sender=sender(targets);
+            View v=new View(()->source.image,sender);v.shortcut=key->{if(key==KeyEvent.VK_C){Peer p=source.peer;if(p!=null)p.shortcut(key);}else for(Card c:targets){Peer p=c.peer;if(p!=null)p.shortcut(key);}};source.largeViews.add(v);JScrollPane screen=new JScrollPane(v);screen.getViewport().setBackground(Ui.FIELD);remote.add(screen);
+            JPanel bar=Ui.transparent(new Ui.WrapLayout(FlowLayout.LEFT,10,6));bar.add(Ui.label(group?"SERENTAK  /  "+label:"INDIVIDUAL  /  "+label,13,true,Ui.ACCENT));
+            JComboBox<String> quality=new JComboBox<>(MODES);quality.setSelectedIndex(Math.max(0,MODE_CODES.indexOf(source.mode)));quality.addActionListener(e->{source.mode=modeCode(quality.getSelectedIndex());source.updateStream();v.requestFocusInWindow();});bar.add(quality);
+            JComboBox<String> sizing=new JComboBox<>(new String[]{"Pas jendela","Ukuran asli 1:1","Regangkan"});
+            sizing.addActionListener(e->{v.oneToOne=sizing.getSelectedIndex()==1;v.stretch=sizing.getSelectedIndex()==2;v.prepared=null;if(v.oneToOne)quality.setSelectedIndex(2);v.revalidate();v.repaint();source.updateStream();v.requestFocusInWindow();});bar.add(sizing);
+            bar.add(shortcutsButton("Tombol khusus",()->sender,v::requestFocusInWindow));
+            JButton full=button("Layar penuh",()->{});final boolean[] fullscreen={false};final Rectangle[] previous={null};final int[] previousState={0};
+            Runnable toggle=()->{sender.send("RESET");if(!fullscreen[0]){previous[0]=remote.getBounds();previousState[0]=remote.getExtendedState();remote.dispose();remote.setUndecorated(true);remote.setExtendedState(JFrame.NORMAL);remote.setBounds(remote.getGraphicsConfiguration().getBounds());remote.setVisible(true);fullscreen[0]=true;full.setText("Keluar layar penuh");}
+                else {remote.dispose();remote.setUndecorated(false);remote.setBounds(previous[0]);remote.setExtendedState(previousState[0]);remote.setVisible(true);fullscreen[0]=false;full.setText("Layar penuh");}v.requestFocusInWindow();source.updateStream();};
+            full.addActionListener(e->toggle.run());bar.add(full);v.escape=()->{if(!fullscreen[0])return false;toggle.run();return true;};remote.add(bar,BorderLayout.NORTH);
+            remote.getRootPane().registerKeyboardAction(e->{if(fullscreen[0])toggle.run();},KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE,0),JComponent.WHEN_IN_FOCUSED_WINDOW);
+            JLabel info=Ui.label(group?"  Input ke klien yang dipilih saat jendela dibuka. Samakan posisi aplikasi di setiap klien. Tombol khusus: Win, Alt+Tab, Task Manager.":"  Input hanya ke komputer ini. Ctrl+C / Ctrl+V: clipboard teks. Esc: keluar layar penuh. Win, Alt+Tab, Alt+F4: gunakan Tombol khusus.",12,false,Ui.MUTED);info.setBorder(BorderFactory.createEmptyBorder(10,8,10,8));remote.add(info,BorderLayout.SOUTH);
+            remote.addWindowListener(new WindowAdapter(){public void windowClosed(WindowEvent e){later(()->{if(!remote.isDisplayable()){sender.send("RESET");source.largeViews.remove(v);source.updateStream();remotes.remove(remote);}});}});
+            remote.setSize(1250,820);remote.setLocationRelativeTo(f);remotes.add(remote);remote.setVisible(true);v.requestFocusInWindow();source.updateStream();
+        }
+    }
+    public static void main(String[] args)throws Exception{
+        ImageIO.setUseCache(false);
+        if(System.getProperty("java.net.useSystemProxies")==null)System.setProperty("java.net.useSystemProxies","true");// follow the Windows proxy settings for update checks
+        if(args.length>0&&args[0].equals("--test")){Tests.run();return;}
+        if(args.length>0&&args[0].equals("--preview")){theme();SwingUtilities.invokeAndWait(()->{try{VisualTests.preview();}catch(Exception e){throw new RuntimeException(e);}});return;}
+        List<String> list=Arrays.asList(args);justUpdated=list.contains(Updater.UPDATED_FLAG);
+        // A newer, verified JAR waiting in the update folder is installed before the window opens.
+        if(!justUpdated&&!list.contains("--request-admin")&&!list.contains("--test")&&!list.contains("--preview")){try{if(Updater.pending()!=null&&Updater.canRestart()){Updater.restart(list);System.exit(0);}}catch(Exception ignored){}}
+        if(args.length>0&&args[0].equals("--request-admin")){try{RemoteServices.Startup.elevate();}catch(Exception e){JOptionPane.showMessageDialog(null,"Tidak berhasil membuka klien administrator. UAC mungkin dibatalkan.\n"+e.getMessage());System.exit(1);}return;}
+        theme();later(()->{if(args.length>0&&args[0].equals("client"))new Agent(list.contains("--auto"),list.contains("--resume"));else new Controller();});
+    }
+    static class Tests {
+        static void check(boolean ok,String msg){if(!ok)throw new AssertionError(msg);}
+        static void run()throws Exception{
+            ExecutorService ex=Executors.newSingleThreadExecutor();
+            try(ServerSocket ss=new ServerSocket(0,1,InetAddress.getLoopbackAddress())){
+                Future<?> server=ex.submit(()->{try(Socket s=ss.accept();Wire w=new Wire(s,"test-password-long",true)){check(string(w.read()).equals(HELLO),"hello");w.send(command(READY));for(int i=0;i<50;i++){check(string(w.read()).equals("KEYDOWN "+i),"ordering");w.send(command("FRAME "+i));}}catch(Exception e){throw new RuntimeException(e);}});
+                try(Socket s=new Socket(InetAddress.getLoopbackAddress(),ss.getLocalPort());Wire w=new Wire(s,"test-password-long",false)){w.send(command(HELLO));check(string(w.read()).equals(READY),"ready");for(int i=0;i<50;i++){w.send(command("KEYDOWN "+i));check(string(w.read()).equals("FRAME "+i),"duplex");}}
+                server.get(20,TimeUnit.SECONDS);
+            }
+            try(ServerSocket ss=new ServerSocket(0,1,InetAddress.getLoopbackAddress())){
+                Future<Boolean> rejected=ex.submit(()->{try(Socket s=ss.accept();Wire w=new Wire(s,"correct-password-long",true)){w.read();return false;}catch(AEADBadTagException expected){return true;}catch(Exception e){throw new RuntimeException(e);}});
+                try(Socket s=new Socket(InetAddress.getLoopbackAddress(),ss.getLocalPort());Wire w=new Wire(s,"incorrect-password-long",false)){w.send(command(HELLO));}
+                check(rejected.get(20,TimeUnit.SECONDS),"wrong password rejection");
+            }finally{ex.shutdownNow();}
+            check(!Arrays.equals(Wire.nonce(1,0),Wire.nonce(2,0)),"direction nonces");
+            check(!Arrays.equals(Wire.nonce(1,0),Wire.nonce(1,1)),"sequence nonces");
+            System.out.println("PASS: authenticated duplex protocol, 50 ordered commands, wrong password rejection, unique directional nonces.");
+            ServiceTests.run();
+            VisualTests.test();
+            LatencyTests.run();
+            ClipboardTests.run();
+            PerformanceTests.run();
+            UpdateTests.run();
+            UpdaterTests.run();
+        }
+    }
+}

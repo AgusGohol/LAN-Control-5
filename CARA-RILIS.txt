@@ -1,0 +1,26 @@
+CARA MENERBITKAN VERSI BARU (UNTUK PENGEMBANG / CLAUDE)
+
+Saluran pembaruan:
+- GitHub (internet): komputer utama semua pengguna membaca
+  raw.githubusercontent.com/<REPO>/main/rilis/versi-terbaru.txt saat dibuka dan
+  tiap 6 jam, mengunduh rilis/LAN-Control-5-<versi>.jar + .sig, memverifikasi
+  tanda tangan Ed25519, lalu menaruhnya di update\ dan memasang saat tidak dipakai.
+  (Sesi Claude tidak diizinkan membuat GitHub Releases, jadi kanalnya berupa
+  file di repository yang cukup di-push.)
+- Folder update\ (lokal): JAR yang ditaruh langsung di update\LAN-Control-5.jar
+  pada komputer utama dipasang tanpa tanda tangan (akses folder = akses penuh).
+- Klien diperbarui oleh komputer utama melalui koneksi LAN terenkripsi.
+
+Langkah rilis:
+1. Naikkan VERSION di src/LanControl.java (mis. 1.6.0 -> 1.6.1).
+2. java Build.java ; lalu java -jar LAN-Control-5.jar --test (semua PASS).
+3. Tanda tangan dengan kunci offline (folder KUNCI-RILIS-JANGAN-DIBAGIKAN,
+   tidak pernah di repo):
+     java tools/Rilis.java "<folder kunci>\lan5-release-private.key"
+4. Salin ke folder rilis/ dengan nama berversi:
+     rilis/LAN-Control-5-X.Y.Z.jar  dan  rilis/LAN-Control-5-X.Y.Z.jar.sig
+   lalu ubah rilis/versi-terbaru.txt menjadi "versi=X.Y.Z" (paling akhir).
+5. Tulis PEMBARUAN-vX.Y.Z.txt, commit, push ke main. Kunci privat, update\
+   dan build\ TIDAK pernah ikut (lihat .gitignore).
+6. Komputer utama pemilik: taruh JAR yang sama di update\LAN-Control-5.jar
+   agar terpasang tanpa menunggu pemeriksaan 6 jam.
