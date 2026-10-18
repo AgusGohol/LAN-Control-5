@@ -55,7 +55,7 @@ class RemoteTools {
     }
 
     RemoteTools(LanControl.Card card){
-        this.card=card;f.setTitle("File & akses — "+card.name+"  ("+card.ip.getText().trim()+")");f.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+        this.card=card;f.setTitle("File & akses — "+card.name+"  ("+card.ip.getText().trim()+")");f.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);Icons.apply(f,Icons.UTAMA);
         JPanel root=new JPanel(new BorderLayout(8,8));root.setBorder(BorderFactory.createEmptyBorder(12,12,12,12));
         JPanel nav=new JPanel(new BorderLayout(6,6));folder.setToolTipText("Alamat folder di klien. Tekan Enter untuk membuka.");folder.addActionListener(e->refresh());nav.add(folder);
         JPanel navButtons=new JPanel(new FlowLayout(FlowLayout.RIGHT,6,0));navButtons.add(b("Buka / segarkan",this::refresh));navButtons.add(b("Naik",()->{String s=folder.getText().trim();if(!s.isBlank()){folder.setText(parent(s));refresh();}}));navButtons.add(b("Drive",()->{folder.setText("");refresh();}));nav.add(navButtons,BorderLayout.EAST);

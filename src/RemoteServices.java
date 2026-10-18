@@ -146,9 +146,11 @@ class RemoteServices implements AutoCloseable {
             Properties props=new Properties();props.setProperty("code",protect(b64(password),true));Files.createDirectories(config().getParent());
             Path temp=Files.createTempFile(config().getParent(),"settings-",".tmp");try(OutputStream out=Files.newOutputStream(temp)){props.store(out,"LAN Control 5: Windows DPAPI CurrentUser");}
             Files.move(temp,config(),StandardCopyOption.REPLACE_EXISTING);
-            try{powershell("$s=(New-Object -ComObject WScript.Shell).CreateShortcut("+literal(shortcut().toString())+");$s.TargetPath="+literal(javaw.toString())+";$s.Arguments="+literal("-jar \""+jar+"\" client --auto")+";$s.WorkingDirectory="+literal(jar.getParent().toString())+";$s.Description='LAN Control 5 - klien terlihat saat login';$s.Save()","");}
+            try{powershell("$s=(New-Object -ComObject WScript.Shell).CreateShortcut("+literal(shortcut().toString())+");$s.TargetPath="+literal(javaw.toString())+";$s.Arguments="+literal("-jar \""+jar+"\" client --auto")+";$s.WorkingDirectory="+literal(jar.getParent().toString())+";$s.Description='LAN Control 5 - klien terlihat saat login';"+startupIcon()+"$s.Save()","");}
             catch(Exception e){Files.deleteIfExists(config());throw e;}
         }
+        /** Startup shortcut uses the client icon when it can be installed next to the JAR. */
+        static String startupIcon(){try{Icons.install();return "$s.IconLocation="+literal(Icons.icon(Icons.KLIEN)+",0")+";";}catch(Exception e){return "";}}
         static String load()throws Exception{windows();Properties p=new Properties();try(InputStream in=Files.newInputStream(config())){p.load(in);}return un64(protect(p.getProperty("code"),false));}
         static void disable()throws Exception{windows();removeTask();Files.deleteIfExists(shortcut());Files.deleteIfExists(config());}
     }

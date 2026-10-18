@@ -17,7 +17,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LanControl {
-    static final String VERSION="1.7.1",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
+    static final String VERSION="1.7.2",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
     static final int PORT=45851, MAX=8*1024*1024;
     static volatile boolean justUpdated;
     static final Color BG=Ui.BG, PANEL=Ui.SURFACE, TEXT=Ui.TEXT;
@@ -149,7 +149,8 @@ public class LanControl {
             actions.add(button("Aktifkan otomatis saat Windows login",()->startup(true)));actions.add(button("Aktifkan otomatis dengan izin administrator",this::startupAdmin));actions.add(button("Nonaktifkan otomatis saat login",()->startup(false)));body.add(actions);
             JPanel bottom=Ui.transparent(new GridLayout(0,1,0,9));status.setForeground(Ui.ACCENT);bottom.add(status);bottom.add(Ui.label("Resolusi mengikuti jendela kontrol. Kualitas dapat dipilih di komputer utama.",12,false,Ui.MUTED));body.add(bottom,BorderLayout.SOUTH);
             root.add(body);root.add(Ui.label("Biarkan klien terbuka  /  Port TCP "+PORT+"  /  Tombol hentikan selalu tersedia",12,false,Ui.MUTED),BorderLayout.SOUTH);
-            f.add(root);f.setSize(900,690);f.setLocationRelativeTo(null);f.setVisible(true);
+            Icons.apply(f,Icons.KLIEN);f.add(root);f.setSize(900,690);f.setLocationRelativeTo(null);f.setVisible(true);
+            WORK.submit(()->Icons.ensure(Icons.KLIEN,()->{try{return RemoteServices.Startup.isAdmin()?"--request-admin":"client";}catch(Exception e){return "client";}}));
             if(resume&&!automatic)WORK.submit(()->{try{Properties saved=Updater.takeResume();String code=saved==null?null:Updater.code(saved);
                     if(code!=null){later(()->{password.setText(code);start();status.setText((justUpdated?"Diperbarui ke v"+VERSION:"Berjalan kembali")+"  /  Menunggu kontrol utama...");});
                         // After elevation from a normal client with login startup: move startup to the elevated Task Scheduler entry (no UAC at next login).
@@ -450,7 +451,7 @@ List<java.awt.Rectangle> changed=null;
             onlineUpdate.setOpaque(false);onlineUpdate.setEnabled(!Updater.repository.isBlank());onlineUpdate.setToolTipText(Updater.repository.isBlank()?"Sumber pembaruan internet belum diatur di versi ini.":"Periksa rilis bertanda tangan di github.com/"+Updater.repository+" saat dibuka dan setiap 6 jam.");onlineUpdate.addActionListener(e->{save();nextOnline=0;});actions.add(onlineUpdate);
             reconnect.setOpaque(false);reconnect.setToolTipText("Jika koneksi putus (Wi-Fi, restart klien), utama mencoba menyambung kembali sampai Anda klik Putus.");reconnect.addActionListener(e->{if(!reconnect.isSelected())for(Card c:cards)if(c.retry!=null){c.stopRetry();c.wanted=false;c.status.setText("Offline");c.status.setForeground(Ui.MUTED);}save();});actions.add(reconnect);
             timer=new javax.swing.Timer(700,e->{grid.refreshFocus();count.setText(cards.stream().filter(c->c.peer!=null&&c.peer.alive).count()+" / 4 klien online");cards.forEach(Card::updateStream);});
-            if(!preview){Toolkit.getDefaultToolkit().addAWTEventListener(e->lastInput=System.currentTimeMillis(),AWTEvent.KEY_EVENT_MASK|AWTEvent.MOUSE_EVENT_MASK|AWTEvent.MOUSE_MOTION_EVENT_MASK|AWTEvent.MOUSE_WHEEL_EVENT_MASK);
+            if(!preview){Icons.apply(f,Icons.UTAMA);WORK.submit(()->Icons.ensure(Icons.UTAMA,()->""));Toolkit.getDefaultToolkit().addAWTEventListener(e->lastInput=System.currentTimeMillis(),AWTEvent.KEY_EVENT_MASK|AWTEvent.MOUSE_EVENT_MASK|AWTEvent.MOUSE_MOTION_EVENT_MASK|AWTEvent.MOUSE_WHEEL_EVENT_MASK);
                 if(justUpdated)updatedUntil=System.currentTimeMillis()+30_000;updateTimer=new javax.swing.Timer(1000,e->tickUpdate());updateTimer.start();load();f.addWindowListener(new WindowAdapter(){public void windowClosing(WindowEvent e){saveNow();}});f.add(dashboard);f.setSize(1400,1000);f.setLocationRelativeTo(null);f.setVisible(true);timer.start();}
         }
         void alertOnce(String text){long now=System.currentTimeMillis();if(now-alerted<5000)return;alerted=now;error(f,new Exception(text));}
@@ -550,7 +551,7 @@ List<java.awt.Rectangle> changed=null;
             if(source.peer==null){error(f,new Exception("Klien belum terhubung."));return;}
             List<Card> targets=new ArrayList<>();if(group){for(Card c:cards)if(c.selected.isSelected()&&c.peer!=null)targets.add(c);}else targets.add(source);
             String label=group?targets.size()+" klien":source.name+"  ("+source.ip.getText().trim()+")";
-            JFrame remote=new JFrame(group?"Kontrol serentak — "+label:"Kontrol individual — "+label);remote.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);remote.setMinimumSize(new Dimension(800,550));
+            JFrame remote=new JFrame(group?"Kontrol serentak — "+label:"Kontrol individual — "+label);remote.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);remote.setMinimumSize(new Dimension(800,550));Icons.apply(remote,Icons.UTAMA);
             Sender sender=sender(targets);
             View v=new View(()->source.image,sender);v.shortcut=key->{if(key==KeyEvent.VK_C){Peer p=source.peer;if(p!=null)p.shortcut(key);}else for(Card c:targets){Peer p=c.peer;if(p!=null)p.shortcut(key);}};v.drop=items->sendFiles(targets,items,v);source.largeViews.add(v);JScrollPane screen=new JScrollPane(v);screen.getViewport().setBackground(Ui.FIELD);remote.add(screen);
             JPanel bar=Ui.transparent(new Ui.WrapLayout(FlowLayout.LEFT,10,6));bar.add(Ui.label(group?"SERENTAK  /  "+label:"INDIVIDUAL  /  "+label,13,true,Ui.ACCENT));
@@ -575,7 +576,12 @@ List<java.awt.Rectangle> changed=null;
         if(args.length>0&&args[0].equals("--preview")){theme();SwingUtilities.invokeAndWait(()->{try{VisualTests.preview();}catch(Exception e){throw new RuntimeException(e);}});return;}
         List<String> list=Arrays.asList(args);justUpdated=list.contains(Updater.UPDATED_FLAG);
         // A newer, verified JAR waiting in the update folder is installed before the window opens.
-        if(!justUpdated&&!list.contains("--request-admin")&&!list.contains("--test")&&!list.contains("--preview")){try{if(Updater.pending()!=null&&Updater.canRestart()){Updater.restart(list);System.exit(0);}}catch(Exception ignored){}}
+        if(!justUpdated&&!list.contains("--request-admin")&&!list.contains("--shortcut")&&!list.contains("--test")&&!list.contains("--preview")){try{if(Updater.pending()!=null&&Updater.canRestart()){Updater.restart(list);System.exit(0);}}catch(Exception ignored){}}
+        if(args.length>1&&args[0].equals("--shortcut")){
+            String kind=args[1].startsWith("klien")?Icons.KLIEN:Icons.UTAMA,arguments=args[1].equals("klien-admin")?"--request-admin":kind.equals(Icons.KLIEN)?"client":"";
+            try{Icons.createShortcut(kind,arguments);JOptionPane.showMessageDialog(null,"Pintasan \""+Icons.name(kind)+"\" dibuat di Desktop dan menu Start.","LAN Control 5",JOptionPane.INFORMATION_MESSAGE);}
+            catch(Exception e){JOptionPane.showMessageDialog(null,"Pintasan gagal dibuat: "+message(e),"LAN Control 5",JOptionPane.ERROR_MESSAGE);System.exit(1);}
+            System.exit(0);}
         if(args.length>0&&args[0].equals("--request-admin")){try{RemoteServices.Startup.elevate();}catch(Exception e){JOptionPane.showMessageDialog(null,"Tidak berhasil membuka klien administrator. UAC mungkin dibatalkan.\n"+e.getMessage());System.exit(1);}return;}
         theme();later(()->{if(args.length>0&&args[0].equals("client"))new Agent(list.contains("--auto"),list.contains("--resume"),list.contains("--upgrade-startup"));else new Controller();});
     }
@@ -603,6 +609,7 @@ List<java.awt.Rectangle> changed=null;
             PerformanceTests.run();
             UpdateTests.run();
             UpdaterTests.run();
+            IconTests.run();
             TransferTests.run();
             PrivilegeTests.run();
             StreamTests.run();
