@@ -74,10 +74,10 @@ class RemoteTools {
             @SuppressWarnings("unchecked") public boolean importData(TransferSupport s){if(!canImport(s))return false;try{List<File> list=(List<File>)s.getTransferable().getTransferData(DataFlavor.javaFileListFlavor);upload(list.stream().map(File::toPath).toList());return true;}catch(Exception e){LanControl.error(f,e);return false;}}};
         table.setTransferHandler(drop);tableScroll.setTransferHandler(drop);files.add(tableScroll);
         JPanel fileActions=new JPanel(new Ui.WrapLayout(FlowLayout.LEFT,6,4));
-        fileActions.add(b("Kirim file",this::chooseUpload));fileActions.add(b("Ambil file",this::download));
+        fileActions.add(b("Kirim file / folder",this::chooseUpload));fileActions.add(b("Ambil file",this::download));
         fileActions.add(b("Buka di klien",()->{List<Entry> s=selection();if(s.size()==1)run(()->peer().rpc("OPEN",s.get(0).path()));else message("Pilih satu file/folder untuk dibuka.");}));
         fileActions.add(b("Folder baru",this::makeFolder));fileActions.add(b("Ubah nama",this::rename));fileActions.add(b("Hapus",this::delete));
-        JLabel hint=new JLabel("Tip: tarik file dari Windows Explorer ke daftar ini untuk mengirim. Ctrl/Shift+klik untuk memilih beberapa.");hint.setForeground(Ui.MUTED);hint.setFont(new Font(Ui.FONT,Font.PLAIN,13));fileActions.add(hint);files.add(fileActions,BorderLayout.SOUTH);
+        JLabel hint=new JLabel("Tip: tarik file atau folder dari Windows Explorer ke daftar ini (atau ke layar klien) untuk mengirim. Ctrl/Shift+klik untuk memilih beberapa.");hint.setForeground(Ui.MUTED);hint.setFont(new Font(Ui.FONT,Font.PLAIN,13));fileActions.add(hint);files.add(fileActions,BorderLayout.SOUTH);
         JPanel access=new JPanel();access.setLayout(new BoxLayout(access,BoxLayout.Y_AXIS));
         access.add(new JLabel("Clipboard teks — salin manual sesuai kebutuhan"));access.add(new JScrollPane(clipboard));JPanel clipButtons=new JPanel();
         clipButtons.add(b("Kirim teks ke clipboard klien",()->{String s=clipboard.getText();run(()->peer().rpc("CLIP_SET",s));}));
@@ -128,7 +128,7 @@ class RemoteTools {
     }
     void chooseUpload(){
         if(current().isBlank()){message("Buka folder tujuan di klien terlebih dahulu (klik dua kali drive/folder).");return;}
-        JFileChooser chooser=new JFileChooser();chooser.setMultiSelectionEnabled(true);chooser.setDialogTitle("Pilih file untuk dikirim ke "+current());if(chooser.showOpenDialog(f)!=JFileChooser.APPROVE_OPTION)return;
+        JFileChooser chooser=new JFileChooser();chooser.setMultiSelectionEnabled(true);chooser.setFileSelectionMode(JFileChooser.FILES_AND_DIRECTORIES);chooser.setDialogTitle("Pilih file atau folder untuk dikirim ke "+current());if(chooser.showOpenDialog(f)!=JFileChooser.APPROVE_OPTION)return;
         upload(Arrays.stream(chooser.getSelectedFiles()).map(File::toPath).toList());
     }
     void showTransfer(){progress.setValue(0);progress.setString("0%");progress.setVisible(true);cancel.setVisible(true);}
@@ -137,24 +137,10 @@ class RemoteTools {
     void upload(List<Path> chosen){
         if(busy){message("Tunggu proses saat ini selesai.");return;}
         String base=current();if(base.isBlank()){message("Buka folder tujuan di klien terlebih dahulu (klik dua kali drive/folder).");return;}
-        List<Path> local=new ArrayList<>(),skipped=new ArrayList<>();for(Path p:chosen)(Files.isRegularFile(p)?local:skipped).add(p);
-        if(local.isEmpty()){message("Pilih file. Mengirim folder belum didukung; kompres folder menjadi ZIP terlebih dahulu.");return;}
-        Set<String> taken=names();showTransfer();
-        run(()->{LanControl.Peer p=peer();long total=0;for(Path x:local)total+=Files.size(x);long sent=0,started=System.nanoTime();List<String> renamed=new ArrayList<>(),failed=new ArrayList<>();
-            for(int i=0;i<local.size();i++){Path file=local.get(i);String original=file.getFileName().toString(),name=unique(original,taken);taken.add(name.toLowerCase(Locale.ROOT));String label="Kirim "+(i+1)+"/"+local.size()+": "+name;
-                String id;try{id=LanControl.string(p.rpc("PUT_BEGIN",child(base,name)));}catch(IOException e){failed.add(original+": "+e.getMessage());sent+=Files.size(file);continue;}
-                boolean done=false;
-                try(InputStream input=Files.newInputStream(file)){byte[] buf=new byte[RemoteServices.CHUNK];int n;
-                    while((n=input.readNBytes(buf,0,buf.length))>0){checkCancel();p.rpc("PUT_CHUNK",id,Base64.getEncoder().encodeToString(Arrays.copyOf(buf,n)));sent+=n;progress(label,sent,total,started);}
-                    p.rpc("PUT_END",id);done=true;if(!name.equals(original))renamed.add(original+"  →  "+name);
-                }catch(IOException e){if(cancelled||!f.isDisplayable())throw e;failed.add(original+": "+e.getMessage());}
-                finally{if(!done&&p.alive)try{p.rpc("PUT_CANCEL",id);}catch(Exception ignored){}}
-            }
-            list();long count=local.size()-failed.size();String summary="Terkirim "+count+" dari "+local.size()+" file ke "+base;
-            LanControl.later(()->{status.setText(summary);if(!renamed.isEmpty()||!failed.isEmpty()||!skipped.isEmpty()){StringBuilder b=new StringBuilder(summary);
-                if(!renamed.isEmpty())b.append("\n\nNama sudah ada, disimpan dengan nama baru:\n").append(String.join("\n",renamed));
-                if(!skipped.isEmpty())b.append("\n\nFolder dilewati (kompres menjadi ZIP untuk mengirim):\n").append(skipped.stream().map(x->x.getFileName().toString()).reduce((a,c)->a+"\n"+c).orElse(""));
-                if(!failed.isEmpty())b.append("\n\nGagal:\n").append(String.join("\n",failed));message(b.toString());}});
+        if(chosen.isEmpty())return;Set<String> taken=names();showTransfer();
+        run(()->{LanControl.Peer p=peer();long started=System.nanoTime();
+            Transfer.Result result=Transfer.upload(p,base,chosen,taken,()->cancelled||!f.isDisplayable(),(label,done,total)->progress(label,done,total,started));
+            list();LanControl.later(()->{status.setText(result.summary(base));if(result.worthShowing())message(result.details(base));});
         });
     }
     void download(){

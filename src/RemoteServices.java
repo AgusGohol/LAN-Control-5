@@ -18,6 +18,13 @@ class RemoteServices implements AutoCloseable {
     static String un64(String s){return new String(Base64.getDecoder().decode(s),StandardCharsets.UTF_8);}
     static byte[] text(String s){return s.getBytes(StandardCharsets.UTF_8);}
     static Path path(String s)throws IOException{if(s.isBlank())throw new IOException("Isi alamat file/folder klien.");return Path.of(s).toAbsolutePath().normalize();}
+    /** Desktop of the logged-in user; on Windows this follows OneDrive/redirected Desktop folders. */
+    static volatile Path desktopOverride;// tests
+    static Path desktop(){
+        if(desktopOverride!=null)return desktopOverride;
+        try{File home=javax.swing.filechooser.FileSystemView.getFileSystemView().getHomeDirectory();if(System.getProperty("os.name").toLowerCase().contains("win")&&home.isDirectory())return home.toPath();}catch(Exception ignored){}
+        Path d=Path.of(System.getProperty("user.home"),"Desktop");return Files.isDirectory(d)?d:Path.of(System.getProperty("user.home"));
+    }
     static void windows()throws IOException{if(!System.getProperty("os.name").toLowerCase().contains("win"))throw new IOException("Fitur ini memerlukan Windows.");}
     /** Synchronized: file RPCs run on a worker thread while close() may run on the session thread. */
     synchronized byte[] execute(String op,List<String> a)throws Exception {
@@ -50,6 +57,7 @@ class RemoteServices implements AutoCloseable {
             }
             case "PUT_CANCEL": {Upload u=uploads.remove(a.get(0));if(u!=null){u.output.close();Files.deleteIfExists(u.temporary);}return text("Dibatalkan");}
             case "VERSION":return text(LanControl.VERSION);
+            case "DESKTOP":return text(desktop().toString());
             case "UPDATE_BEGIN": {
                 String version=a.get(0);if(!Updater.newer(version))throw new IOException("Versi "+version+" tidak lebih baru dari klien v"+LanControl.VERSION+".");
                 if(onUpdate==null)throw new IOException("Klien ini tidak dapat memulai ulang otomatis.");

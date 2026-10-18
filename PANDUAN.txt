@@ -1,3 +1,4 @@
+BACA PEMBARUAN-v1.6.1.txt UNTUK TARIK FILE & FOLDER KE LAYAR KLIEN.
 BACA PEMBARUAN-v1.6.0.txt UNTUK PEMBARUAN OTOMATIS DARI GITHUB.
 BACA PEMBARUAN-v1.5.1.txt UNTUK PEMBARUAN OTOMATIS (UTAMA DAN KLIEN).
 BACA PEMBARUAN-v1.5.0.txt UNTUK PERBAIKAN BUG, SAMBUNG ULANG OTOMATIS,
@@ -12,7 +13,7 @@ BACA PEMBARUAN-v1.3.txt UNTUK KUALITAS GAMBAR DAN PEMASANGAN TERBARU.
 
 BACA MULAI-AKSES-ADMIN.txt UNTUK FITUR ADMINISTRATOR BARU.
 
-LAN CONTROL 5 — VERSI 1.6.0 / AKSES KOMPUTER & STARTUP LOGIN
+LAN CONTROL 5 — VERSI 1.6.1 / AKSES KOMPUTER & STARTUP LOGIN
 1 komputer utama + 4 komputer klien / Windows / Wi-Fi atau LAN yang sama.
 
 PASANG PEMBARUAN
@@ -93,7 +94,8 @@ Klik File & akses pada kartu klien yang terhubung.
 - Kunci mengunci klien; layar terkunci belum bisa dibuka dari aplikasi ini.
 - Semua akses file dan aplikasi mengikuti hak akun Windows pada klien.
 - Startup administrator opsional tersedia sesuai MULAI-AKSES-ADMIN.txt.
-- Belum ada layanan sebelum login, audio, kirim folder sekaligus,
+- Tarik file/folder ke layar klien untuk mengirim ke Desktop klien.
+- Belum ada layanan sebelum login, audio, ambil folder sekaligus,
   clipboard gambar/file, terminal jarak jauh, atau monitor tambahan.
 
 KEAMANAN DAN PENCABUTAN

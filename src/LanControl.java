@@ -16,7 +16,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LanControl {
-    static final String VERSION="1.6.0",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
+    static final String VERSION="1.6.1",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
     static final int PORT=45851, MAX=8*1024*1024;
     static volatile boolean justUpdated;
     static final Color BG=Ui.BG, PANEL=Ui.SURFACE, TEXT=Ui.TEXT;
@@ -258,6 +258,8 @@ public class LanControl {
         final java.util.function.Supplier<BufferedImage> source;final Sender sender;
         Rectangle area=new Rectangle();boolean dragging=false;volatile boolean oneToOne=false,stretch=false;java.util.function.IntConsumer shortcut;java.util.function.BooleanSupplier escape=()->false;final Set<Integer> swallowed=new HashSet<>();
         volatile int displayWidth,displayHeight;volatile Prepared prepared;double wheel=0;
+        /** Files/folders dropped from Windows Explorer onto the client screen; null disables dropping. */
+        java.util.function.Consumer<List<java.nio.file.Path>> drop;volatile boolean dragOver;
         record Prepared(BufferedImage source,int width,int height,BufferedImage scaled) {}
         void prepare(BufferedImage frame){int w=displayWidth,h=displayHeight;if(oneToOne||w<1||h<1){prepared=null;return;}double scale=Math.min(w/(double)frame.getWidth(),h/(double)frame.getHeight());int width=stretch?w:Math.max(1,(int)(frame.getWidth()*scale)),height=stretch?h:Math.max(1,(int)(frame.getHeight()*scale));BufferedImage scaled=new BufferedImage(width,height,BufferedImage.TYPE_INT_RGB);Graphics2D g=scaled.createGraphics();g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_BILINEAR);g.drawImage(frame,0,0,width,height,null);g.dispose();prepared=new Prepared(frame,w,h,scaled);}
         static boolean mainButton(MouseEvent e){return e.getButton()>=MouseEvent.BUTTON1&&e.getButton()<=MouseEvent.BUTTON3;}
@@ -278,6 +280,15 @@ public class LanControl {
                 else if(k!=KeyEvent.VK_UNDEFINED)sender.send("KEYDOWN "+k);e.consume();}
                 public void keyReleased(KeyEvent e){if(!swallowed.remove(e.getKeyCode()))sender.send("KEYUP "+e.getKeyCode());e.consume();}});
             setFocusTraversalKeysEnabled(false);addFocusListener(new FocusAdapter(){public void focusLost(FocusEvent e){dragging=false;swallowed.clear();wheel=0;sender.send("RESET");}});
+            new java.awt.dnd.DropTarget(this,java.awt.dnd.DnDConstants.ACTION_COPY,new java.awt.dnd.DropTargetAdapter(){
+                boolean accept(java.awt.dnd.DropTargetDragEvent e){boolean ok=drop!=null&&source.get()!=null&&e.isDataFlavorSupported(java.awt.datatransfer.DataFlavor.javaFileListFlavor);if(ok)e.acceptDrag(java.awt.dnd.DnDConstants.ACTION_COPY);else e.rejectDrag();if(dragOver!=ok){dragOver=ok;repaint();}return ok;}
+                public void dragEnter(java.awt.dnd.DropTargetDragEvent e){accept(e);}public void dragOver(java.awt.dnd.DropTargetDragEvent e){accept(e);}
+                public void dragExit(java.awt.dnd.DropTargetEvent e){dragOver=false;repaint();}
+                @SuppressWarnings("unchecked") public void drop(java.awt.dnd.DropTargetDropEvent e){dragOver=false;repaint();
+                    if(drop==null||source.get()==null){e.rejectDrop();return;}
+                    try{e.acceptDrop(java.awt.dnd.DnDConstants.ACTION_COPY);List<java.io.File> files=(List<java.io.File>)e.getTransferable().getTransferData(java.awt.datatransfer.DataFlavor.javaFileListFlavor);e.dropComplete(true);
+                        if(!files.isEmpty())drop.accept(files.stream().map(java.io.File::toPath).toList());}catch(Exception x){e.dropComplete(false);}}
+            },true);
         }
         public Dimension getPreferredScrollableViewportSize(){return new Dimension(800,500);}
         public int getScrollableUnitIncrement(Rectangle visible,int orientation,int direction){return 24;}
@@ -292,7 +303,10 @@ public class LanControl {
             double scale=oneToOne?1:Math.min(getWidth()/(double)im.getWidth(),getHeight()/(double)im.getHeight());int w=stretch&&!oneToOne?getWidth():Math.max(1,(int)(im.getWidth()*scale)),h=stretch&&!oneToOne?getHeight():Math.max(1,(int)(im.getHeight()*scale));
             area=new Rectangle(Math.max(0,(getWidth()-w)/2),Math.max(0,(getHeight()-h)/2),w,h);
             g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_BILINEAR);g.setRenderingHint(RenderingHints.KEY_RENDERING,RenderingHints.VALUE_RENDER_QUALITY);
-            Prepared ready=prepared;if(!oneToOne&&ready!=null&&ready.source()==im&&ready.width()==getWidth()&&ready.height()==getHeight())g.drawImage(ready.scaled(),area.x,area.y,w,h,null);else {g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_BILINEAR);g.drawImage(im,area.x,area.y,w,h,null);}if(hasFocus()){g.setColor(Ui.ACCENT);g.drawRect(0,0,getWidth()-1,getHeight()-1);}g.dispose();
+            Prepared ready=prepared;if(!oneToOne&&ready!=null&&ready.source()==im&&ready.width()==getWidth()&&ready.height()==getHeight())g.drawImage(ready.scaled(),area.x,area.y,w,h,null);else {g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_BILINEAR);g.drawImage(im,area.x,area.y,w,h,null);}if(hasFocus()){g.setColor(Ui.ACCENT);g.drawRect(0,0,getWidth()-1,getHeight()-1);}
+            if(dragOver){g.setColor(new Color(8,20,28,190));g.fillRect(0,0,getWidth(),getHeight());g.setColor(Ui.ACCENT);g.setStroke(new BasicStroke(3,BasicStroke.CAP_ROUND,BasicStroke.JOIN_ROUND,1,new float[]{12,9},0));g.drawRoundRect(12,12,getWidth()-25,getHeight()-25,18,18);
+                g.setFont(new Font(Ui.FONT,Font.BOLD,Math.max(15,Math.min(26,getWidth()/30))));String t="Lepas untuk mengirim ke Desktop klien";g.drawString(t,(getWidth()-g.getFontMetrics().stringWidth(t))/2,getHeight()/2);}
+            g.dispose();
         }
     }
     static class Card extends Ui.RoundPanel {
@@ -306,7 +320,7 @@ public class LanControl {
             selected.setOpaque(false);JPanel choose=Ui.transparent(new FlowLayout(FlowLayout.RIGHT,6,0));choose.add(button("Fokus",()->owner.focus(this)));choose.add(selected);head.add(choose,BorderLayout.EAST);
             JPanel address=Ui.transparent(new BorderLayout(8,0));ip.setToolTipText("IP LAN atau Tailscale klien");ip.addActionListener(e->connect());address.add(ip);JPanel connect=Ui.transparent(new GridLayout(1,2,6,0));connect.add(Ui.primary("Hubungkan",this::connect));connect.add(button("Putus",this::disconnect));address.add(connect,BorderLayout.EAST);
             JPanel upper=Ui.transparent(new BorderLayout(0,12));upper.add(head,BorderLayout.NORTH);upper.add(address);add(upper,BorderLayout.NORTH);
-            view=new View(()->image,msg->{Peer p=peer;if(p!=null)p.send(msg);});view.shortcut=key->{Peer p=peer;if(p!=null)p.shortcut(key);};add(view);
+            view=new View(()->image,msg->{Peer p=peer;if(p!=null)p.send(msg);});view.shortcut=key->{Peer p=peer;if(p!=null)p.shortcut(key);};view.drop=items->owner.sendFiles(List.of(this),items,view);add(view);
             JPanel footer=Ui.transparent(new BorderLayout(8,0));JPanel info=Ui.transparent(new GridLayout(0,1,0,4));info.add(status);info.add(picture);footer.add(info);
             JPanel actions=Ui.transparent(new FlowLayout(FlowLayout.RIGHT,6,0));
             actions.add(shortcutsButton("Pintasan",()->{Peer p=peer;if(p==null){error(owner.f,new Exception("Hubungkan klien terlebih dahulu."));return null;}return p::send;},view::requestFocusInWindow));
@@ -415,7 +429,7 @@ public class LanControl {
             String v=pendingVersion;
             if(v==null||installing){boolean recent=now<updatedUntil;updateBar.setVisible(recent||installing);if(recent&&!installing){updateLabel.setForeground(Ui.ACCENT);updateLabel.setText("Berhasil diperbarui ke v"+VERSION+".");for(Component c:updateBar.getComponents())if(c!=updateLabel)c.setVisible(false);}return;}
             for(Component c:updateBar.getComponents())c.setVisible(true);updateBar.setVisible(true);updateLabel.setForeground(Ui.WARN);
-            boolean inUse=!remotes.isEmpty()||RemoteTools.anyBusy()||now<postponeUntil,idle=now-lastInput>=60_000;
+            boolean inUse=!remotes.isEmpty()||RemoteTools.anyBusy()||dropTransfers.get()>0||now<postponeUntil,idle=now-lastInput>=60_000;
             if(!Updater.canRestart()){updateLabel.setText("Pembaruan v"+v+" ada di folder update. Tutup lalu buka aplikasi untuk memasang.");return;}
             if(inUse||!idle){countdown=-1;updateLabel.setText("Pembaruan v"+v+" siap. "+(now<postponeUntil?"Ditunda; ":"")+"Mulai ulang otomatis setelah 1 menit tidak dipakai (jendela Perbesar/transfer ditutup).");return;}
             countdown=countdown<0?30:countdown-1;updateLabel.setText("Pembaruan v"+v+": mulai ulang otomatis dalam "+countdown+" dtk. Gerakkan mouse untuk menunda.");if(countdown<=0)installUpdate();
@@ -426,6 +440,27 @@ public class LanControl {
             String code=new String(password.getPassword());StringBuilder online=new StringBuilder();for(Card c:cards)if(c.peer!=null||c.wanted){if(online.length()>0)online.append(',');online.append(c.number);}
             WORK.submit(()->{try{Updater.stash(code,Map.of("cards",online.toString()));Updater.restart(List.of());later(()->System.exit(0));}
                 catch(Exception e){later(()->{installing=false;countdown=-1;postponeUntil=System.currentTimeMillis()+30*60_000;error(f,new Exception("Gagal memasang pembaruan: "+message(e)));});}});
+        }
+        final java.util.concurrent.atomic.AtomicInteger dropTransfers=new java.util.concurrent.atomic.AtomicInteger();
+        /** Files/folders dropped onto a client screen go to that client's Desktop (all targets in a Kontrol serentak window). */
+        void sendFiles(List<Card> targets,List<java.nio.file.Path> items,Component from){
+            List<Card> online=targets.stream().filter(c->c.peer!=null).toList();Window owner=SwingUtilities.getWindowAncestor(from);
+            if(online.isEmpty()){error(owner,new Exception("Klien belum terhubung."));return;}
+            String names=items.stream().limit(3).map(x->String.valueOf(x.getFileName())).reduce((a,b)->a+", "+b).orElse("")+(items.size()>3?" dan "+(items.size()-3)+" lainnya":"");
+            if(online.size()>1&&JOptionPane.showConfirmDialog(owner,"Kirim "+names+" ke Desktop "+online.size()+" klien?","Kirim ke beberapa klien",JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return;
+            JDialog dialog=new JDialog(owner,"Mengirim ke Desktop klien",Dialog.ModalityType.MODELESS);JLabel label=Ui.label("Menyiapkan "+names+"...",13,false,Ui.TEXT);JProgressBar bar=new JProgressBar(0,1000);bar.setStringPainted(true);bar.setString("0%");
+            boolean[] cancelled={false};JButton cancel=button("Batal",()->{cancelled[0]=true;label.setText("Membatalkan...");});
+            JPanel body=new JPanel(new BorderLayout(0,12));body.setBorder(BorderFactory.createEmptyBorder(18,20,18,20));body.add(label,BorderLayout.NORTH);body.add(bar);JPanel south=Ui.transparent(new FlowLayout(FlowLayout.RIGHT,0,0));south.add(cancel);body.add(south,BorderLayout.SOUTH);
+            dialog.add(body);dialog.setSize(560,170);dialog.setLocationRelativeTo(owner);dialog.setVisible(true);dropTransfers.incrementAndGet();
+            WORK.submit(()->{List<String> lines=new ArrayList<>();boolean problems=false;long started=System.nanoTime();
+                try{for(Card c:online){Peer p=c.peer;if(p==null){lines.add(c.name+": terputus");problems=true;continue;}
+                        try{String desk=Transfer.desktop(p);Set<String> taken=Transfer.names(p,desk);
+                            Transfer.Result result=Transfer.upload(p,desk,items,taken,()->cancelled[0],(what,done,total)->{int value=total<=0?1000:(int)(done*1000/total);String text=c.name+"  —  "+what+"  ("+RemoteTools.size(done)+" / "+RemoteTools.size(total)+", "+RemoteTools.speed(done,System.nanoTime()-started)+")";later(()->{label.setText(text);bar.setValue(value);bar.setString(value/10+"%");});});
+                            c.notice(result.summary("Desktop klien"));lines.add(c.name+": "+result.details("Desktop ("+desk+")"));problems|=result.worthShowing();}
+                        catch(Exception e){lines.add(c.name+": gagal — "+message(e));problems=true;if(cancelled[0])break;}}}
+                finally{dropTransfers.decrementAndGet();}
+                boolean show=problems||online.size()>1;String report=String.join("\n\n",lines);
+                later(()->{dialog.dispose();if(show)JOptionPane.showMessageDialog(owner,report,"Kirim ke Desktop klien",JOptionPane.INFORMATION_MESSAGE);});});
         }
         /** Sends this master's own JAR to an older client (once per client and version). */
         void checkVersion(Card card,Peer p,String host){
@@ -460,7 +495,7 @@ public class LanControl {
             String label=group?targets.size()+" klien":source.name+"  ("+source.ip.getText().trim()+")";
             JFrame remote=new JFrame(group?"Kontrol serentak — "+label:"Kontrol individual — "+label);remote.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);remote.setMinimumSize(new Dimension(800,550));
             Sender sender=sender(targets);
-            View v=new View(()->source.image,sender);v.shortcut=key->{if(key==KeyEvent.VK_C){Peer p=source.peer;if(p!=null)p.shortcut(key);}else for(Card c:targets){Peer p=c.peer;if(p!=null)p.shortcut(key);}};source.largeViews.add(v);JScrollPane screen=new JScrollPane(v);screen.getViewport().setBackground(Ui.FIELD);remote.add(screen);
+            View v=new View(()->source.image,sender);v.shortcut=key->{if(key==KeyEvent.VK_C){Peer p=source.peer;if(p!=null)p.shortcut(key);}else for(Card c:targets){Peer p=c.peer;if(p!=null)p.shortcut(key);}};v.drop=items->sendFiles(targets,items,v);source.largeViews.add(v);JScrollPane screen=new JScrollPane(v);screen.getViewport().setBackground(Ui.FIELD);remote.add(screen);
             JPanel bar=Ui.transparent(new Ui.WrapLayout(FlowLayout.LEFT,10,6));bar.add(Ui.label(group?"SERENTAK  /  "+label:"INDIVIDUAL  /  "+label,13,true,Ui.ACCENT));
             JComboBox<String> quality=new JComboBox<>(MODES);quality.setSelectedIndex(Math.max(0,MODE_CODES.indexOf(source.mode)));quality.addActionListener(e->{source.mode=modeCode(quality.getSelectedIndex());source.updateStream();v.requestFocusInWindow();});bar.add(quality);
             JComboBox<String> sizing=new JComboBox<>(new String[]{"Pas jendela","Ukuran asli 1:1","Regangkan"});
@@ -471,7 +506,7 @@ public class LanControl {
                 else {remote.dispose();remote.setUndecorated(false);remote.setBounds(previous[0]);remote.setExtendedState(previousState[0]);remote.setVisible(true);fullscreen[0]=false;full.setText("Layar penuh");}v.requestFocusInWindow();source.updateStream();};
             full.addActionListener(e->toggle.run());bar.add(full);v.escape=()->{if(!fullscreen[0])return false;toggle.run();return true;};remote.add(bar,BorderLayout.NORTH);
             remote.getRootPane().registerKeyboardAction(e->{if(fullscreen[0])toggle.run();},KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE,0),JComponent.WHEN_IN_FOCUSED_WINDOW);
-            JLabel info=Ui.label(group?"  Input ke klien yang dipilih saat jendela dibuka. Samakan posisi aplikasi di setiap klien. Tombol khusus: Win, Alt+Tab, Task Manager.":"  Input hanya ke komputer ini. Ctrl+C / Ctrl+V: clipboard teks. Esc: keluar layar penuh. Win, Alt+Tab, Alt+F4: gunakan Tombol khusus.",12,false,Ui.MUTED);info.setBorder(BorderFactory.createEmptyBorder(10,8,10,8));remote.add(info,BorderLayout.SOUTH);
+            JLabel info=Ui.label(group?"  Input ke klien yang dipilih saat jendela dibuka. Samakan posisi aplikasi di setiap klien. Tombol khusus: Win, Alt+Tab, Task Manager.":"  Input hanya ke komputer ini. Tarik file/folder ke layar: kirim ke Desktop klien. Ctrl+C / Ctrl+V: teks. Esc: keluar layar penuh. Win, Alt+Tab: Tombol khusus.",12,false,Ui.MUTED);info.setBorder(BorderFactory.createEmptyBorder(10,8,10,8));remote.add(info,BorderLayout.SOUTH);
             remote.addWindowListener(new WindowAdapter(){public void windowClosed(WindowEvent e){later(()->{if(!remote.isDisplayable()){sender.send("RESET");source.largeViews.remove(v);source.updateStream();remotes.remove(remote);}});}});
             remote.setSize(1250,820);remote.setLocationRelativeTo(f);remotes.add(remote);remote.setVisible(true);v.requestFocusInWindow();source.updateStream();
         }
@@ -511,6 +546,7 @@ public class LanControl {
             PerformanceTests.run();
             UpdateTests.run();
             UpdaterTests.run();
+            TransferTests.run();
         }
     }
 }
