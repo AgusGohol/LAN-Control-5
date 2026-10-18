@@ -15,7 +15,7 @@ class LatencyTests {
         for(String expected:new String[]{"MOVE 0.1 0.2","DOWN 1024","MOVE 0.7 0.8","UP 1024","KEYDOWN 65","KEYUP 65","VIDEO_ACK","VIDEO AUTO 1920 1080","RPC a LIST -"})check(expected.equals(queue.poll(1)),"control order and priority: "+expected);
         check(queue.poll(1)==null,"duplicate video confirmations coalesced");
         StreamQuality.State quality=new StreamQuality.State();quality.config=new StreamQuality.Config("NATIVE",1920,1080);BufferedImage source=VisualTests.sample(800,450);
-        byte[] idle=StreamQuality.encode(source,quality);check((idle[0]&255)==137,"idle native uses lossless PNG");quality.interact();byte[] interactive=StreamQuality.encode(source,quality);check((interactive[0]&255)==255,"input switches to lightweight JPEG");check(quality.pause()==80,"active input accelerates refresh");
+        byte[] idle=StreamQuality.encode(source,quality);check((idle[0]&255)==137,"idle native uses lossless PNG");quality.interact();byte[] interactive=StreamQuality.encode(source,quality);check((interactive[0]&255)==255,"input switches to lightweight JPEG");check(quality.pause()==33,"active input runs at 30 fps");
         check(ImageIO.read(new ByteArrayInputStream(interactive)).getWidth()==800,"interactive keeps native image dimensions");quality.interactiveUntil=0;byte[] restored=StreamQuality.encode(source,quality);check((restored[0]&255)==137,"lossless restored after input stops");
         networkOrder();
         System.out.println("PASS: 100,000 pointer moves collapse to one, click/drag/key order retained, controls precede bulk work, interactive encoding and encrypted input order.");

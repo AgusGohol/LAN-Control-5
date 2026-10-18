@@ -24,7 +24,7 @@ class VisualTests {
         state.config=new StreamQuality.Config("AUTO",600,338);Dimension small=state.size(3840,2160);state.config=new StreamQuality.Config("AUTO",1800,1000);Dimension large=state.size(3840,2160);check(large.width>small.width,"auto resolution grows with viewport");
         check(Math.abs(large.width/(double)large.height-16/9.0)<.01,"preserve aspect ratio");
         for(int i=0;i<14;i++)state.sample(900);check(state.factor<1,"congestion reduces auto resolution");for(int i=0;i<100;i++)state.sample(70);check(state.factor==1,"resolution recovers after congestion");
-        state.begin();state.ready.acquire();state.ack();state.ack();check(state.ready.availablePermits()==1,"duplicate acknowledgements cannot queue frames");
+        state.begin();state.ready.acquire();state.ack();state.ack();check(state.ready.availablePermits()==StreamQuality.State.WINDOW,"duplicate acknowledgements cannot queue extra frames");
         state.config=new StreamQuality.Config("HD",100,100);check(state.size(3840,2160).equals(new Dimension(1920,1080)),"HD resolution");state.config=new StreamQuality.Config("HEMAT",100,100);check(state.size(3840,2160).equals(new Dimension(960,540)),"economy resolution");
         check(ImageIO.read(new ByteArrayInputStream(StreamQuality.encode(source,state))).getWidth()==960,"JPEG roundtrip");
         check(StreamQuality.fit(800,600,3840,2160).equals(new Dimension(800,600)),"never upscale source");

@@ -17,7 +17,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LanControl {
-    static final String VERSION="1.6.2",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
+    static final String VERSION="1.7.0",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
     static final int PORT=45851, MAX=8*1024*1024;
     static volatile boolean justUpdated;
     static final Color BG=Ui.BG, PANEL=Ui.SURFACE, TEXT=Ui.TEXT;
@@ -195,11 +195,12 @@ public class LanControl {
                 StreamQuality.State stream=new StreamQuality.State();input.frameCache.clear();
                 Future<?> video=WORK.submit(()->{try{while(active&&!s.isClosed()){
                     if(!stream.ready.tryAcquire(10,TimeUnit.SECONDS))throw new IOException("Pratinjau tidak dikonfirmasi");
-                    stream.begin();w.send(input.frame(stream));Thread.sleep(stream.pause());
+                    // Fixed-rate pacing: the next frame starts one interval after this one started (33 ms = 30 fps), not after an extra pause.
+                    long begun=System.nanoTime();stream.begin();w.send(input.frame(stream));long rest=stream.pause()-(System.nanoTime()-begun)/1_000_000;if(rest>0)Thread.sleep(rest);
                 }}catch(Exception e){w.close();}});
                 try{while(active&&!s.isClosed()){String msg=string(w.read());
                     if(msg.startsWith("RPC ")){if(clipboardRpc(msg))handleRpc(w,services,msg,input,clipboard);else files.execute(()->{try{handleRpc(w,services,msg,null,null);}catch(Exception e){w.close();}});}
-                    else if(msg.startsWith("VIDEO "))stream.configure(msg.split(" "));else if(msg.equals("VIDEO_ACK"))stream.ack();else {if(ControlQueue.input(msg))stream.interact();input.apply(msg);}}}
+                    else if(msg.startsWith("VIDEO "))stream.configure(msg.split(" "));else if(msg.equals("VIDEO_KEY"))stream.forceKey=true;else if(msg.equals("VIDEO_ACK"))stream.ack();else {if(ControlQueue.input(msg))stream.interact();input.apply(msg);}}}
                 finally{video.cancel(true);files.shutdownNow();clipboard.shutdownNow();}
             }finally{current=null;input.release();if(active)later(()->status.setText("Menunggu kontrol utama..."));}
         }
@@ -226,6 +227,10 @@ public class LanControl {
     static void fail(Wire w,String id,Exception e){try{w.send(command("RESULT "+id+" ERR "+RemoteServices.b64(message(e))));}catch(Exception broken){w.close();}}
     static class Peer {
         String videoConfig="";long frames=0,frameBytes=0,started=System.nanoTime();
+        /** Screen updates (new, partial or unchanged) received in the last 2 seconds: the real stream rate. */
+        final ArrayDeque<Long> updates=new ArrayDeque<>();
+        synchronized void tick(){long now=System.nanoTime();updates.addLast(now);while(now-updates.peekFirst()>2_000_000_000L)updates.pollFirst();}
+        synchronized double fps(){long now=System.nanoTime();while(!updates.isEmpty()&&now-updates.peekFirst()>2_000_000_000L)updates.pollFirst();return updates.size()/2.0;}
         final Wire wire;final ControlQueue queue=new ControlQueue();volatile boolean alive=true;final Card card;
         /** Text known to be on both clipboards after the last sync. Ctrl+V only uploads master text when it changed. */
         volatile String clipboardMark;
@@ -261,7 +266,10 @@ public class LanControl {
         void close(){alive=false;wire.close();pending.values().forEach(p->p.completeExceptionally(new IOException("Klien terputus.")));pending.clear();}
         void start(){
             WORK.submit(()->{try{while(alive){String s=queue.poll(2000);wire.send(command(s==null?"PING":s));}}catch(Exception e){close();}});
-            WORK.submit(()->{try{while(alive){byte[] data=wire.read();if(Arrays.equals(data,command("FRAME_SAME"))){send("VIDEO_ACK");continue;}if(data.length>7&&data[0]=='R'){String[] p=string(data).split(" ",4);if(p.length==4&&p[0].equals("RESULT")){CompletableFuture<byte[]> task=pending.get(p[1]);if(task!=null){byte[] result=Base64.getDecoder().decode(p[3]);if(p[2].equals("OK"))task.complete(result);else task.completeExceptionally(new IOException(string(result)));}continue;}}BufferedImage image=ImageIO.read(new ByteArrayInputStream(data));if(image==null)throw new IOException("Gambar tidak valid");card.prepareViews(image);card.image=image;frames++;frameBytes=data.length;send("VIDEO_ACK");later(card::refreshViews);}}catch(Exception e){}finally{close();later(()->{if(card.peer==this){card.peer=null;card.image=null;card.lost();card.refreshViews();}});}});
+            WORK.submit(()->{try{while(alive){byte[] data=wire.read();if(Arrays.equals(data,command("FRAME_SAME"))){tick();send("VIDEO_ACK");continue;}if(data.length>7&&data[0]=='R'){String[] p=string(data).split(" ",4);if(p.length==4&&p[0].equals("RESULT")){CompletableFuture<byte[]> task=pending.get(p[1]);if(task!=null){byte[] result=Base64.getDecoder().decode(p[3]);if(p[2].equals("OK"))task.complete(result);else task.completeExceptionally(new IOException(string(result)));}continue;}}BufferedImage image;
+                if(FrameCache.isTiles(data)){image=FrameCache.apply(card.image,data);if(image==null){send("VIDEO_KEY");send("VIDEO_ACK");continue;}}
+                else {image=ImageIO.read(new ByteArrayInputStream(data));if(image==null)throw new IOException("Gambar tidak valid");}
+                card.prepareViews(image);card.image=image;frames++;tick();frameBytes=data.length;send("VIDEO_ACK");later(card::refreshViews);}}catch(Exception e){}finally{close();later(()->{if(card.peer==this){card.peer=null;card.image=null;card.lost();card.refreshViews();}});}});
         }
     }
     interface Sender {void send(String s);}
@@ -302,7 +310,7 @@ public class LanControl {
                 else if(k!=KeyEvent.VK_UNDEFINED)sender.send("KEYDOWN "+k);e.consume();}
                 public void keyReleased(KeyEvent e){if(!swallowed.remove(e.getKeyCode()))sender.send("KEYUP "+e.getKeyCode());e.consume();}});
             setFocusTraversalKeysEnabled(false);addFocusListener(new FocusAdapter(){public void focusLost(FocusEvent e){dragging=false;swallowed.clear();wheel=0;sender.send("RESET");}});
-            new java.awt.dnd.DropTarget(this,java.awt.dnd.DnDConstants.ACTION_COPY,new java.awt.dnd.DropTargetAdapter(){
+            if(!GraphicsEnvironment.isHeadless())new java.awt.dnd.DropTarget(this,java.awt.dnd.DnDConstants.ACTION_COPY,new java.awt.dnd.DropTargetAdapter(){
                 boolean accept(java.awt.dnd.DropTargetDragEvent e){boolean ok=drop!=null&&source.get()!=null&&e.isDataFlavorSupported(java.awt.datatransfer.DataFlavor.javaFileListFlavor);if(ok)e.acceptDrag(java.awt.dnd.DnDConstants.ACTION_COPY);else e.rejectDrag();if(dragOver!=ok){dragOver=ok;repaint();}return ok;}
                 public void dragEnter(java.awt.dnd.DropTargetDragEvent e){accept(e);}public void dragOver(java.awt.dnd.DropTargetDragEvent e){accept(e);}
                 public void dragExit(java.awt.dnd.DropTargetEvent e){dragOver=false;repaint();}
@@ -371,8 +379,8 @@ public class LanControl {
             boolean enlarged=largeViews.stream().anyMatch(v->v.isShowing()&&!(SwingUtilities.getWindowAncestor(v) instanceof Frame frame&&(frame.getExtendedState()&Frame.ICONIFIED)!=0));
             boolean focusedPreview=!enlarged&&view.isShowing()&&view.getHeight()>=300;
             boolean visible=enlarged||(view.isShowing()&&!view.getVisibleRect().isEmpty()&&!(SwingUtilities.getWindowAncestor(view) instanceof Frame frame&&(frame.getExtendedState()&Frame.ICONIFIED)!=0));
-            String config="VIDEO "+((enlarged||focusedPreview)?mode:"PREVIEW")+" "+Math.max(320,w)+" "+Math.max(180,h)+" "+(visible?(enlarged?120:focusedPreview?220:300):1000);if(!config.equals(p.videoConfig)){p.videoConfig=config;p.send(config);}
-            BufferedImage im=image;if(im!=null&&System.currentTimeMillis()>noticeUntil){double seconds=(System.nanoTime()-p.started)/1e9;picture.setText(im.getWidth()+" × "+im.getHeight()+"  /  "+String.format(java.util.Locale.ROOT,"%.1f fps",p.frames/Math.max(1,seconds))+"  /  "+modeLabel(mode));}
+            String config="VIDEO "+((enlarged||focusedPreview)?mode:"PREVIEW")+" "+Math.max(320,w)+" "+Math.max(180,h)+" "+(visible?((enlarged||focusedPreview)?(mode.equals("NATIVE")?50:33):300):1000)+" TILES";if(!config.equals(p.videoConfig)){p.videoConfig=config;p.send(config);}
+            BufferedImage im=image;if(im!=null&&System.currentTimeMillis()>noticeUntil){double seconds=(System.nanoTime()-p.started)/1e9;picture.setText(im.getWidth()+" × "+im.getHeight()+"  /  "+String.format(java.util.Locale.ROOT,"%.0f fps",p.fps())+"  /  "+modeLabel(mode));}
         }
         void connect(){wanted=true;attempts=0;stopRetry();open(false,false);}
         /** Used by "Hubungkan semua" and the launch auto-connect: errors stay on the card instead of popping up. */
@@ -586,6 +594,7 @@ public class LanControl {
             UpdaterTests.run();
             TransferTests.run();
             PrivilegeTests.run();
+            StreamTests.run();
         }
     }
 }

@@ -6,8 +6,8 @@ class PerformanceTests {
     static void check(boolean condition,String message){if(!condition)throw new AssertionError(message);}
     static void run()throws Exception{
         StreamQuality.State state=new StreamQuality.State();check(state.size(3840,2160).equals(new Dimension(640,360)),"default preview is bounded");
-        state.configure(new String[]{"VIDEO","AUTO","3840","2160","120"});check(state.size(3840,2160).equals(new Dimension(1600,900)),"automatic resolution bounded");
-        state.configure(new String[]{"VIDEO","PREVIEW","640","360","1000"});check(state.pause()>=1000,"hidden preview slows down");state.interact();check(state.pause()==80,"input resumes quicker refresh");state.interactiveUntil=0;
+        state.configure(new String[]{"VIDEO","AUTO","3840","2160","120"});check(state.size(3840,2160).equals(new Dimension(1920,1080)),"automatic resolution bounded to Full HD");
+        state.configure(new String[]{"VIDEO","PREVIEW","640","360","1000"});check(state.pause()>=1000,"hidden preview slows down");state.interact();check(state.pause()==33,"input resumes quicker refresh");state.interactiveUntil=0;
         state.config=new StreamQuality.Config("NATIVE",800,450);FrameCache cache=new FrameCache();BufferedImage first=VisualTests.sample(800,450);BufferedImage second=new BufferedImage(800,450,BufferedImage.TYPE_INT_RGB);second.setRGB(0,0,800,450,first.getRGB(0,0,800,450,null,0,800),0,800);
         byte[] encoded=cache.encode(first,state);check((encoded[0]&255)==137,"first frame encoded");byte[] same=cache.encode(second,state);check(LanControl.string(same).equals("FRAME_SAME"),"unchanged image skips encoder");
         BufferedImage changed=new BufferedImage(800,450,BufferedImage.TYPE_INT_RGB);changed.setRGB(0,0,800,450,first.getRGB(0,0,800,450,null,0,800),0,800);changed.setRGB(799,449,first.getRGB(799,449)^0x00ffffff);check(!Arrays.equals(cache.encode(changed,state),same),"single-pixel change is transmitted");
