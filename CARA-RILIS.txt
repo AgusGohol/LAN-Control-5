@@ -19,6 +19,8 @@ Langkah rilis:
      java tools/Rilis.java "<folder kunci>\lan5-release-private.key"
 4. Salin ke folder rilis/ dengan nama berversi:
      rilis/LAN-Control-5-X.Y.Z.jar  dan  rilis/LAN-Control-5-X.Y.Z.jar.sig
+   serta paket pengguna rilis/LAN-Control-5-X.Y.Z.zip (folder LAN-Control-5 berisi
+   LAN-Control-5.jar, semua .bat, MULAI-DI-SINI.txt, PANDUAN dan PEMBARUAN terbaru),
    lalu ubah rilis/versi-terbaru.txt menjadi "versi=X.Y.Z" (paling akhir).
 5. Tulis PEMBARUAN-vX.Y.Z.txt, commit, push ke main. Kunci privat, update\
    dan build\ TIDAK pernah ikut (lihat .gitignore).
