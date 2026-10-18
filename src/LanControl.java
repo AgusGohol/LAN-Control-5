@@ -9,6 +9,7 @@ import java.io.*;
 import java.net.*;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.security.*;
 import java.util.*;
 import java.util.List;
@@ -16,7 +17,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LanControl {
-    static final String VERSION="1.6.1",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
+    static final String VERSION="1.6.2",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
     static final int PORT=45851, MAX=8*1024*1024;
     static volatile boolean justUpdated;
     static final Color BG=Ui.BG, PANEL=Ui.SURFACE, TEXT=Ui.TEXT;
@@ -129,23 +130,31 @@ public class LanControl {
 
     static class Agent {
         final JFrame f=window("LAN Control 5 — Klien");final JPasswordField password=new JPasswordField(24);
-        final JLabel status=new JLabel("Belum berbagi layar");volatile boolean active=false;volatile ServerSocket listener;volatile Wire current;
+        final JLabel status=new JLabel("Belum berbagi layar");JButton elevateButton;volatile boolean active=false;volatile ServerSocket listener;volatile Wire current;
         final boolean automatic;
-        Agent(boolean automatic){this(automatic,false);}
-        Agent(boolean automatic,boolean resume){this.automatic=automatic;
+        volatile Boolean admin;
+        Agent(boolean automatic){this(automatic,false,false);}
+        Agent(boolean automatic,boolean resume){this(automatic,resume,false);}
+        Agent(boolean automatic,boolean resume,boolean upgradeStartup){this.automatic=automatic;
             JPanel root=new JPanel(new BorderLayout(0,22));root.setBorder(BorderFactory.createEmptyBorder(26,28,24,28));
             JPanel heading=Ui.transparent(new GridLayout(0,1,0,7));heading.add(Ui.label("LAN CONTROL 5",12,true,Ui.ACCENT));heading.add(Ui.label("Bagikan komputer ini",27,true,Ui.TEXT));heading.add(Ui.label("Klien v"+VERSION+"  /  Kontrol layar dan file melalui LAN atau Tailscale",13,false,Ui.MUTED));root.add(heading,BorderLayout.NORTH);
             Ui.RoundPanel body=new Ui.RoundPanel(new BorderLayout(0,18));JPanel details=Ui.transparent(new GridLayout(0,1,0,9));
             JLabel permission=Ui.label("Memeriksa izin Windows...",13,false,Ui.MUTED);details.add(permission);
-            WORK.submit(()->{try{boolean admin=RemoteServices.Startup.isAdmin();later(()->permission.setText(admin?"Izin: ADMINISTRATOR":"Izin: BIASA  /  Gunakan peluncur Admin untuk aplikasi administrator"));}catch(Exception e){later(()->permission.setText("Status izin Windows belum tersedia"));}});
+            WORK.submit(()->{try{boolean isAdmin=RemoteServices.Startup.isAdmin();admin=isAdmin;RemoteServices.privilege=isAdmin?"ADMIN":"BIASA";
+                    later(()->{permission.setText(isAdmin?"Izin: ADMINISTRATOR  /  Klik dan ketik ke semua aplikasi":"Izin: BIASA  /  Klik ke aplikasi Administrator (Task Manager, installer) TIDAK berfungsi");permission.setForeground(isAdmin?Ui.ACCENT:Ui.WARN);elevateButton.setVisible(!isAdmin);});}
+                catch(Exception e){later(()->permission.setText("Status izin Windows belum tersedia"));}});
             details.add(Ui.label("Alamat komputer ini: "+addresses(),13,true,Ui.TEXT));details.add(Ui.label("Kode koneksi  /  minimal 12 karakter, sama dengan komputer utama",12,false,Ui.MUTED));
             password.setPreferredSize(new Dimension(300,40));details.add(password);body.add(details,BorderLayout.NORTH);
-            JPanel actions=Ui.transparent(new GridLayout(0,1,0,9));actions.add(Ui.primary("Mulai berbagi layar & izinkan kontrol",this::start));actions.add(button("Hentikan berbagi / putuskan kontrol",this::stop));
+            JPanel actions=Ui.transparent(new GridLayout(0,1,0,9));actions.add(Ui.primary("Mulai berbagi layar & izinkan kontrol",this::start));actions.add(button("Hentikan berbagi / putuskan kontrol",this::stop));elevateButton=Ui.primary("Mulai ulang sebagai Administrator (disarankan)",this::elevateSelf);elevateButton.setVisible(false);actions.add(elevateButton);
             actions.add(button("Aktifkan otomatis saat Windows login",()->startup(true)));actions.add(button("Aktifkan otomatis dengan izin administrator",this::startupAdmin));actions.add(button("Nonaktifkan otomatis saat login",()->startup(false)));body.add(actions);
             JPanel bottom=Ui.transparent(new GridLayout(0,1,0,9));status.setForeground(Ui.ACCENT);bottom.add(status);bottom.add(Ui.label("Resolusi mengikuti jendela kontrol. Kualitas dapat dipilih di komputer utama.",12,false,Ui.MUTED));body.add(bottom,BorderLayout.SOUTH);
             root.add(body);root.add(Ui.label("Biarkan klien terbuka  /  Port TCP "+PORT+"  /  Tombol hentikan selalu tersedia",12,false,Ui.MUTED),BorderLayout.SOUTH);
             f.add(root);f.setSize(900,690);f.setLocationRelativeTo(null);f.setVisible(true);
-            if(resume&&!automatic)WORK.submit(()->{try{Properties saved=Updater.takeResume();String code=saved==null?null:Updater.code(saved);if(code!=null)later(()->{password.setText(code);start();status.setText("Diperbarui ke v"+VERSION+"  /  Menunggu kontrol utama...");});}catch(Exception e){error(f,new Exception("Isi kode lagi lalu klik Mulai berbagi: "+message(e)));}});
+            if(resume&&!automatic)WORK.submit(()->{try{Properties saved=Updater.takeResume();String code=saved==null?null:Updater.code(saved);
+                    if(code!=null){later(()->{password.setText(code);start();status.setText((justUpdated?"Diperbarui ke v"+VERSION:"Berjalan kembali")+"  /  Menunggu kontrol utama...");});
+                        // After elevation from a normal client with login startup: move startup to the elevated Task Scheduler entry (no UAC at next login).
+                        if(upgradeStartup){try{RemoteServices.Startup.enableAdmin(code);later(()->status.setText("Startup otomatis kini dengan izin Administrator  /  Menunggu kontrol utama..."));}catch(Exception e){error(f,new Exception("Startup administrator belum aktif: "+message(e)));}}}}
+                catch(Exception e){error(f,new Exception("Isi kode lagi lalu klik Mulai berbagi: "+message(e)));}});
             if(automatic)WORK.submit(()->{try{String code=RemoteServices.Startup.load();later(()->{password.setText(code);start();});}catch(Exception e){error(f,new Exception("Startup otomatis gagal: "+message(e)));}});
         }
         void startupAdmin(){String code=new String(password.getPassword());WORK.submit(()->{try{RemoteServices.Startup.enableAdmin(code);later(()->{JOptionPane.showMessageDialog(f,"Startup administrator aktif untuk akun Windows ini. Klien akan tampil dan berbagi setelah login. Folder aplikasi harus tetap di lokasi ini. Nonaktifkan melalui klien administrator.");start();});}catch(Exception e){error(f,e);}});}
@@ -159,6 +168,18 @@ public class LanControl {
             WORK.submit(()->{try{Input input=new Input();serve(server,pass,()->active,(s,w)->session(s,w,input));}
                 catch(Exception e){if(active)error(f,e);}finally{try{server.close();}catch(Exception ignored){}later(()->{if(listener==server)stop();});}});
         }
+        /**
+         * Restart this client elevated (UAC must be confirmed on this computer). Sharing resumes with the same code,
+         * the master reconnects by itself, and a normal login startup is upgraded to the elevated one.
+         */
+        void elevateSelf(){
+            if(Boolean.TRUE.equals(admin)){JOptionPane.showMessageDialog(f,"Klien sudah berjalan sebagai Administrator.");return;}
+            String code=new String(password.getPassword());boolean wasActive=active&&code.length()>=12,upgrade;try{upgrade=Files.exists(RemoteServices.Startup.shortcut());}catch(Exception e){upgrade=false;}boolean upgradeStartup=upgrade;
+            if(wasActive)stop();status.setText("Menunggu persetujuan UAC di komputer ini (tekan Ya)...");
+            WORK.submit(()->{try{if(wasActive)Updater.stash(code,Map.of());RemoteServices.Startup.elevate("client"+(wasActive?" --resume":"")+(wasActive&&upgradeStartup?" --upgrade-startup":""));later(()->System.exit(0));}
+                catch(Exception e){try{Files.deleteIfExists(Updater.resumeFile());}catch(IOException ignored){}
+                    later(()->{status.setText("Izin Administrator tidak diberikan. Klien tetap berjalan dengan izin BIASA.");if(wasActive)start();});}});
+        }
         /** Called after the master pushed a verified newer JAR: restart with the same mode; the master reconnects by itself. */
         void restartForUpdate(){String code=new String(password.getPassword());status.setText("Memasang pembaruan, klien mulai ulang...");
             WORK.submit(()->{try{List<String> args=new ArrayList<>(List.of("client"));if(automatic)args.add("--auto");else {Updater.stash(code,Map.of());args.add("--resume");}
@@ -170,6 +191,7 @@ public class LanControl {
             ExecutorService files=Executors.newSingleThreadExecutor(LanControl::daemon),clipboard=Executors.newSingleThreadExecutor(LanControl::daemon);
             try(RemoteServices services=new RemoteServices()){
                 services.onUpdate=()->WORK.submit(()->{try{Thread.sleep(600);}catch(InterruptedException ignored){}later(this::restartForUpdate);});
+                services.onElevate=()->WORK.submit(()->{try{Thread.sleep(600);}catch(InterruptedException ignored){}later(this::elevateSelf);});
                 StreamQuality.State stream=new StreamQuality.State();input.frameCache.clear();
                 Future<?> video=WORK.submit(()->{try{while(active&&!s.isClosed()){
                     if(!stream.ready.tryAcquire(10,TimeUnit.SECONDS))throw new IOException("Pratinjau tidak dikonfirmasi");
@@ -312,12 +334,12 @@ public class LanControl {
     static class Card extends Ui.RoundPanel {
         final int number;final Controller owner;volatile Peer peer;volatile BufferedImage image;final JTextField ip=new JTextField(14);final JCheckBox selected=new JCheckBox("Pilih");
         final JLabel title,status=Ui.label("Offline",12,true,Ui.MUTED),picture=Ui.label(" ",11,false,Ui.MUTED);final View view;
-        boolean connecting,wanted;volatile boolean expectRestart;int attempts;javax.swing.Timer retry;String name,note;long noticeUntil;
+        boolean connecting,wanted;volatile boolean expectRestart;volatile String privilege;String host="";int attempts;javax.swing.Timer retry;String name,note;long noticeUntil;
         final List<View> largeViews=new CopyOnWriteArrayList<>();String mode="AUTO";
         Card(int n,Controller owner){super(new BorderLayout(0,12));number=n;this.owner=owner;name="Komputer "+n;
             JPanel head=Ui.transparent(new BorderLayout());JPanel identity=Ui.transparent(new FlowLayout(FlowLayout.LEFT,9,0));identity.add(Ui.label(String.format("%02d",n),13,true,Ui.ACCENT));
             title=Ui.label(name,16,true,Ui.TEXT);title.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));title.setToolTipText("Klik untuk mengganti nama komputer ini");title.addMouseListener(new MouseAdapter(){public void mouseClicked(MouseEvent e){rename();}});identity.add(title);head.add(identity);
-            selected.setOpaque(false);JPanel choose=Ui.transparent(new FlowLayout(FlowLayout.RIGHT,6,0));choose.add(button("Fokus",()->owner.focus(this)));choose.add(selected);head.add(choose,BorderLayout.EAST);
+            status.addMouseListener(new MouseAdapter(){public void mouseClicked(MouseEvent e){privilegeHelp();}});selected.setOpaque(false);JPanel choose=Ui.transparent(new FlowLayout(FlowLayout.RIGHT,6,0));choose.add(button("Fokus",()->owner.focus(this)));choose.add(selected);head.add(choose,BorderLayout.EAST);
             JPanel address=Ui.transparent(new BorderLayout(8,0));ip.setToolTipText("IP LAN atau Tailscale klien");ip.addActionListener(e->connect());address.add(ip);JPanel connect=Ui.transparent(new GridLayout(1,2,6,0));connect.add(Ui.primary("Hubungkan",this::connect));connect.add(button("Putus",this::disconnect));address.add(connect,BorderLayout.EAST);
             JPanel upper=Ui.transparent(new BorderLayout(0,12));upper.add(head,BorderLayout.NORTH);upper.add(address);add(upper,BorderLayout.NORTH);
             view=new View(()->image,msg->{Peer p=peer;if(p!=null)p.send(msg);});view.shortcut=key->{Peer p=peer;if(p!=null)p.shortcut(key);};view.drop=items->owner.sendFiles(List.of(this),items,view);add(view);
@@ -326,6 +348,17 @@ public class LanControl {
             actions.add(shortcutsButton("Pintasan",()->{Peer p=peer;if(p==null){error(owner.f,new Exception("Hubungkan klien terlebih dahulu."));return null;}return p::send;},view::requestFocusInWindow));
             actions.add(button("File & akses",()->{if(peer==null)error(owner.f,new Exception("Hubungkan klien terlebih dahulu."));else new RemoteTools(this);}));actions.add(button("Perbesar",()->owner.open(this,false)));footer.add(actions,BorderLayout.EAST);add(footer,BorderLayout.SOUTH);
             selected.addActionListener(e->{Peer p=peer;if(p!=null)p.send("RESET");});
+        }
+        boolean limited(){return peer!=null&&"BIASA".equals(privilege);}
+        void showOnline(){if(peer==null)return;boolean warn=limited();status.setText("Online • "+host+(warn?"  •  ⚠ Izin BIASA":""));status.setForeground(warn?Ui.WARN:Ui.ACCENT);
+            status.setCursor(Cursor.getPredefinedCursor(warn?Cursor.HAND_CURSOR:Cursor.DEFAULT_CURSOR));status.setToolTipText(warn?"Klien berjalan tanpa izin Administrator: klik ke Task Manager, installer, dan aplikasi admin tidak berfungsi. Klik untuk memperbaiki.":null);}
+        /** Explains the UIPI limitation and lets the master ask the client to restart elevated. */
+        void privilegeHelp(){
+            Peer p=peer;if(p==null||!limited())return;
+            Object[] options={"Minta izin Administrator","Tutup"};
+            int choice=JOptionPane.showOptionDialog(owner.f,name+" berjalan dengan izin BIASA.\n\nWindows melarang klik dan ketikan dari program biasa ke jendela yang berjalan sebagai Administrator,\nmisalnya Task Manager, installer, Regedit, atau aplikasi yang dibuka dengan \"Run as administrator\".\n\nMinta izin Administrator: jendela UAC muncul di komputer klien dan SESEORANG DI KLIEN perlu menekan Ya.\nSetelah itu klien tersambung kembali sendiri, dan startup otomatisnya ikut memakai izin Administrator.\n(Alternatif: jalankan Jalankan-Klien-Admin.bat di klien.)","Izin klien",JOptionPane.DEFAULT_OPTION,JOptionPane.WARNING_MESSAGE,null,options,options[0]);
+            if(choice!=0)return;expectRestart=true;notice("Menunggu seseorang menekan Ya pada jendela UAC di klien...");noticeUntil=System.currentTimeMillis()+180_000;
+            WORK.submit(()->{try{p.rpc("ELEVATE");}catch(Exception e){expectRestart=false;String m=message(e);later(()->{noticeUntil=0;error(owner.f,new Exception(m.contains("tidak dikenal")?"Klien belum v1.6.2. Tunggu klien diperbarui otomatis, lalu coba lagi.":m));});}});
         }
         void applyName(String s){name=s==null||s.isBlank()?"Komputer "+number:s.trim();title.setText(name);}
         void rename(){String s=(String)JOptionPane.showInputDialog(owner.f,"Nama untuk komputer "+number+" (contoh: Kasir, Lab-02):","Ganti nama",JOptionPane.PLAIN_MESSAGE,null,null,name);if(s!=null){applyName(s);owner.save();}}
@@ -355,7 +388,7 @@ public class LanControl {
             if(host.isEmpty()||pass.length()<12){wanted=false;if(!silent)error(owner.f,new Exception("Isi IP klien dan kode minimal 12 karakter."));else {status.setText("Isi IP dan kode");status.setForeground(Ui.WARN);}return;}
             connecting=true;status.setText("Menghubungkan...");status.setForeground(Ui.ACCENT);int port=owner.port;
             WORK.submit(()->{try{Wire w=dial(host,port,pass,5000);Peer p=new Peer(w,this);
-                    later(()->{connecting=false;if(!wanted){p.close();status.setText("Offline");status.setForeground(Ui.MUTED);return;}peer=p;attempts=0;note=null;expectRestart=false;status.setText("Online • "+host);status.setForeground(Ui.ACCENT);p.start();updateStream();owner.save();owner.checkVersion(this,p,host);});}
+                    later(()->{connecting=false;if(!wanted){p.close();status.setText("Offline");status.setForeground(Ui.MUTED);return;}peer=p;attempts=0;note=null;expectRestart=false;privilege=null;this.host=host;showOnline();p.start();updateStream();owner.save();owner.checkVersion(this,p,host);owner.checkPrivilege(this,p);});}
                 catch(Exception e){String reason=connectionReason(e);boolean fatal=e instanceof BadCodeException;
                     later(()->{connecting=false;if(!wanted)return;
                         if(retryOnFail&&!fatal&&(owner.reconnect.isSelected()||expectRestart)){scheduleRetry(reason);return;}
@@ -462,6 +495,11 @@ public class LanControl {
                 boolean show=problems||online.size()>1;String report=String.join("\n\n",lines);
                 later(()->{dialog.dispose();if(show)JOptionPane.showMessageDialog(owner,report,"Kirim ke Desktop klien",JOptionPane.INFORMATION_MESSAGE);});});
         }
+        /** Asks the client whether it runs elevated; older clients simply do not answer this. */
+        void checkPrivilege(Card card,Peer p){
+            WORK.submit(()->{String level;try{level=string(p.rpc("PRIVILEGE"));}catch(Exception e){return;}
+                later(()->{if(card.peer!=p)return;card.privilege=level;card.showOnline();if(card.limited())card.notice("Izin BIASA: klik ke aplikasi Administrator tidak berfungsi. Klik status untuk memperbaiki.");});});
+        }
         /** Sends this master's own JAR to an older client (once per client and version). */
         void checkVersion(Card card,Peer p,String host){
             if(!autoUpdate.isSelected())return;
@@ -520,7 +558,7 @@ public class LanControl {
         // A newer, verified JAR waiting in the update folder is installed before the window opens.
         if(!justUpdated&&!list.contains("--request-admin")&&!list.contains("--test")&&!list.contains("--preview")){try{if(Updater.pending()!=null&&Updater.canRestart()){Updater.restart(list);System.exit(0);}}catch(Exception ignored){}}
         if(args.length>0&&args[0].equals("--request-admin")){try{RemoteServices.Startup.elevate();}catch(Exception e){JOptionPane.showMessageDialog(null,"Tidak berhasil membuka klien administrator. UAC mungkin dibatalkan.\n"+e.getMessage());System.exit(1);}return;}
-        theme();later(()->{if(args.length>0&&args[0].equals("client"))new Agent(list.contains("--auto"),list.contains("--resume"));else new Controller();});
+        theme();later(()->{if(args.length>0&&args[0].equals("client"))new Agent(list.contains("--auto"),list.contains("--resume"),list.contains("--upgrade-startup"));else new Controller();});
     }
     static class Tests {
         static void check(boolean ok,String msg){if(!ok)throw new AssertionError(msg);}
@@ -547,6 +585,7 @@ public class LanControl {
             UpdateTests.run();
             UpdaterTests.run();
             TransferTests.run();
+            PrivilegeTests.run();
         }
     }
 }

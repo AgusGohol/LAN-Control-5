@@ -13,7 +13,9 @@ class RemoteServices implements AutoCloseable {
     final Map<String,Upload> uploads=new HashMap<>();
     record Upload(Path target,Path temporary,OutputStream output) {}
     /** Set by the client session: schedules install + restart after UPDATE_APPLY has been answered. */
-    volatile Runnable onUpdate;
+    volatile Runnable onUpdate,onElevate;
+    /** "ADMIN", "BIASA" or unknown; set by the client window after checking its Windows token. */
+    static volatile String privilege="TIDAK DIKETAHUI";
     static String b64(String s){return Base64.getEncoder().encodeToString(s.getBytes(StandardCharsets.UTF_8));}
     static String un64(String s){return new String(Base64.getDecoder().decode(s),StandardCharsets.UTF_8);}
     static byte[] text(String s){return s.getBytes(StandardCharsets.UTF_8);}
@@ -58,6 +60,12 @@ class RemoteServices implements AutoCloseable {
             case "PUT_CANCEL": {Upload u=uploads.remove(a.get(0));if(u!=null){u.output.close();Files.deleteIfExists(u.temporary);}return text("Dibatalkan");}
             case "VERSION":return text(LanControl.VERSION);
             case "DESKTOP":return text(desktop().toString());
+            case "PRIVILEGE":return text(privilege);
+            case "ELEVATE": {
+                if("ADMIN".equals(privilege))throw new IOException("Klien sudah berjalan sebagai Administrator.");
+                Runnable elevate=onElevate;if(elevate==null)throw new IOException("Klien ini tidak dapat meminta izin Administrator.");
+                elevate.run();return text("Jendela UAC ditampilkan di klien. Seseorang di klien perlu menekan Ya.");
+            }
             case "UPDATE_BEGIN": {
                 String version=a.get(0);if(!Updater.newer(version))throw new IOException("Versi "+version+" tidak lebih baru dari klien v"+LanControl.VERSION+".");
                 if(onUpdate==null)throw new IOException("Klien ini tidak dapat memulai ulang otomatis.");
@@ -91,8 +99,10 @@ class RemoteServices implements AutoCloseable {
         static boolean isAdmin()throws Exception{return powershell("$p=New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent());[Console]::Write($p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))","").equalsIgnoreCase("True");}
         static Path jar()throws Exception {Path p=Path.of(LanControl.class.getProtectionDomain().getCodeSource().getLocation().toURI()).toAbsolutePath();if(!Files.isRegularFile(p)||!p.toString().endsWith(".jar"))throw new IOException("Jalankan JAR dari folder permanen yang sudah diekstrak.");return p;}
         static Path javaw()throws Exception {Path p=Path.of(System.getProperty("java.home"),"bin","javaw.exe");if(!Files.exists(p))throw new IOException("javaw.exe tidak ditemukan.");return p;}
-        static String elevationScript(Path executable,Path jar){return "Start-Process -FilePath "+literal(executable.toString())+" -ArgumentList "+literal("-jar \""+jar+"\" client")+" -WorkingDirectory "+literal(jar.getParent().toString())+" -Verb RunAs";}
-        static void elevate()throws Exception {windows();powershell(elevationScript(javaw(),jar()),"",180);}
+        static String elevationScript(Path executable,Path jar){return elevationScript(executable,jar,"client");}
+        static String elevationScript(Path executable,Path jar,String arguments){return "Start-Process -FilePath "+literal(executable.toString())+" -ArgumentList "+literal("-jar \""+jar+"\" "+arguments)+" -WorkingDirectory "+literal(jar.getParent().toString())+" -Verb RunAs";}
+        static void elevate()throws Exception {elevate("client");}
+        static void elevate(String arguments)throws Exception {windows();powershell(elevationScript(javaw(),jar(),arguments),"",180);}
         static void removeTask()throws Exception {
             powershell(IDENTITY+"$t=Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue;if($null -ne $t){Unregister-ScheduledTask -TaskName $task -Confirm:$false}","");
         }
