@@ -20,8 +20,9 @@ class ControlQueue {
         long deadline=System.nanoTime()+milliseconds*1_000_000;
         while(true){
             if(!controls.isEmpty())return controls.removeFirst();
-            if(motion!=null){String next=motion;motion=null;return next;}
+            // Frame acknowledgements are tiny and gate the next screen update: never starve them behind continuous mouse motion.
             if(acknowledgement){acknowledgement=false;return "VIDEO_ACK";}
+            if(motion!=null){String next=motion;motion=null;return next;}
             if(configuration!=null){String next=configuration;configuration=null;return next;}
             if(!bulk.isEmpty())return bulk.removeFirst();
             long remaining=deadline-System.nanoTime();if(remaining<=0)return null;

@@ -17,7 +17,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LanControl {
-    static final String VERSION="1.7.0",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
+    static final String VERSION="1.7.1",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
     static final int PORT=45851, MAX=8*1024*1024;
     static volatile boolean justUpdated;
     static final Color BG=Ui.BG, PANEL=Ui.SURFACE, TEXT=Ui.TEXT;
@@ -193,16 +193,19 @@ public class LanControl {
                 services.onUpdate=()->WORK.submit(()->{try{Thread.sleep(600);}catch(InterruptedException ignored){}later(this::restartForUpdate);});
                 services.onElevate=()->WORK.submit(()->{try{Thread.sleep(600);}catch(InterruptedException ignored){}later(this::elevateSelf);});
                 StreamQuality.State stream=new StreamQuality.State();input.frameCache.clear();
-                Future<?> video=WORK.submit(()->{try{while(active&&!s.isClosed()){
-                    if(!stream.ready.tryAcquire(10,TimeUnit.SECONDS))throw new IOException("Pratinjau tidak dikonfirmasi");
-                    // Fixed-rate pacing: the next frame starts one interval after this one started (33 ms = 30 fps), not after an extra pause.
-                    long begun=System.nanoTime();stream.begin();w.send(input.frame(stream));long rest=stream.pause()-(System.nanoTime()-begun)/1_000_000;if(rest>0)Thread.sleep(rest);
-                }}catch(Exception e){w.close();}});
+                Future<?> video=WORK.submit(()->{try{streamVideo(w,stream,()->input.frame(stream),()->active&&!s.isClosed());}catch(Exception e){w.close();}});
                 try{while(active&&!s.isClosed()){String msg=string(w.read());
                     if(msg.startsWith("RPC ")){if(clipboardRpc(msg))handleRpc(w,services,msg,input,clipboard);else files.execute(()->{try{handleRpc(w,services,msg,null,null);}catch(Exception e){w.close();}});}
-                    else if(msg.startsWith("VIDEO "))stream.configure(msg.split(" "));else if(msg.equals("VIDEO_KEY"))stream.forceKey=true;else if(msg.equals("VIDEO_ACK"))stream.ack();else {if(ControlQueue.input(msg))stream.interact();input.apply(msg);}}}
+                    else if(msg.startsWith("VIDEO "))stream.configure(msg.split(" "));else if(msg.equals("VIDEO_KEY"))stream.forceKey=true;else if(msg.equals("VIDEO_ACK"))stream.ack();else {if(ControlQueue.input(msg))stream.interact();input.apply(msg);if(!msg.startsWith("MOVE "))stream.nudge();}}}
                 finally{video.cancel(true);files.shutdownNow();clipboard.shutdownNow();}
             }finally{current=null;input.release();if(active)later(()->status.setText("Menunggu kontrol utama..."));}
+        }
+    }
+    /** Client video loop: capture + encode + send, paced by the stream state (also used by the latency tests). */
+    static void streamVideo(Wire w,StreamQuality.State stream,Callable<byte[]> frame,java.util.function.BooleanSupplier running)throws Exception{
+        while(running.getAsBoolean()){
+            if(!stream.ready.tryAcquire(10,TimeUnit.SECONDS))throw new IOException("Pratinjau tidak dikonfirmasi");
+            long begun=System.nanoTime();stream.begin();w.send(frame.call());stream.waitNext(begun);
         }
     }
     static boolean clipboardRpc(String msg){String[] p=msg.split(" ",4);return p.length>=3&&(p[2].equals("COPY_TEXT")||p[2].equals("PASTE_TEXT"));}
@@ -267,9 +270,10 @@ public class LanControl {
         void start(){
             WORK.submit(()->{try{while(alive){String s=queue.poll(2000);wire.send(command(s==null?"PING":s));}}catch(Exception e){close();}});
             WORK.submit(()->{try{while(alive){byte[] data=wire.read();if(Arrays.equals(data,command("FRAME_SAME"))){tick();send("VIDEO_ACK");continue;}if(data.length>7&&data[0]=='R'){String[] p=string(data).split(" ",4);if(p.length==4&&p[0].equals("RESULT")){CompletableFuture<byte[]> task=pending.get(p[1]);if(task!=null){byte[] result=Base64.getDecoder().decode(p[3]);if(p[2].equals("OK"))task.complete(result);else task.completeExceptionally(new IOException(string(result)));}continue;}}BufferedImage image;
-                if(FrameCache.isTiles(data)){image=FrameCache.apply(card.image,data);if(image==null){send("VIDEO_KEY");send("VIDEO_ACK");continue;}}
+List<java.awt.Rectangle> changed=null;
+                if(FrameCache.isTiles(data)){FrameCache.Applied applied=FrameCache.applyTiles(card.image,data);if(applied==null){send("VIDEO_KEY");send("VIDEO_ACK");continue;}image=applied.image();changed=applied.changed();}
                 else {image=ImageIO.read(new ByteArrayInputStream(data));if(image==null)throw new IOException("Gambar tidak valid");}
-                card.prepareViews(image);card.image=image;frames++;tick();frameBytes=data.length;send("VIDEO_ACK");later(card::refreshViews);}}catch(Exception e){}finally{close();later(()->{if(card.peer==this){card.peer=null;card.image=null;card.lost();card.refreshViews();}});}});
+                card.prepareViews(image,changed);card.image=image;frames++;tick();frameBytes=data.length;send("VIDEO_ACK");later(card::refreshViews);}}catch(Exception e){}finally{close();later(()->{if(card.peer==this){card.peer=null;card.image=null;card.lost();card.refreshViews();}});}});
         }
     }
     interface Sender {void send(String s);}
@@ -291,7 +295,13 @@ public class LanControl {
         /** Files/folders dropped from Windows Explorer onto the client screen; null disables dropping. */
         java.util.function.Consumer<List<java.nio.file.Path>> drop;volatile boolean dragOver;
         record Prepared(BufferedImage source,int width,int height,BufferedImage scaled) {}
-        void prepare(BufferedImage frame){int w=displayWidth,h=displayHeight;if(oneToOne||w<1||h<1){prepared=null;return;}double scale=Math.min(w/(double)frame.getWidth(),h/(double)frame.getHeight());int width=stretch?w:Math.max(1,(int)(frame.getWidth()*scale)),height=stretch?h:Math.max(1,(int)(frame.getHeight()*scale));BufferedImage scaled=new BufferedImage(width,height,BufferedImage.TYPE_INT_RGB);Graphics2D g=scaled.createGraphics();g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_BILINEAR);g.drawImage(frame,0,0,width,height,null);g.dispose();prepared=new Prepared(frame,w,h,scaled);}
+        void prepare(BufferedImage frame){prepare(frame,null);}
+        /** Pre-scales the frame for painting; with a list of changed areas only those parts of the previous scaled frame are recomputed. */
+        void prepare(BufferedImage frame,List<java.awt.Rectangle> changed){
+            Prepared last=prepared;int w0=displayWidth,h0=displayHeight;
+            if(changed!=null&&last!=null&&!oneToOne&&last.width()==w0&&last.height()==h0&&last.source().getWidth()==frame.getWidth()&&last.source().getHeight()==frame.getHeight()){
+                BufferedImage updated=FastScale.update(last.scaled(),frame,changed);if(updated!=null){prepared=new Prepared(frame,w0,h0,updated);return;}}
+            int w=displayWidth,h=displayHeight;if(oneToOne||w<1||h<1){prepared=null;return;}double scale=Math.min(w/(double)frame.getWidth(),h/(double)frame.getHeight());int width=stretch?w:Math.max(1,(int)(frame.getWidth()*scale)),height=stretch?h:Math.max(1,(int)(frame.getHeight()*scale));BufferedImage scaled=FastScale.resize(frame,width,height);prepared=new Prepared(frame,w,h,scaled);}
         static boolean mainButton(MouseEvent e){return e.getButton()>=MouseEvent.BUTTON1&&e.getButton()<=MouseEvent.BUTTON3;}
         View(java.util.function.Supplier<BufferedImage> source,Sender sender){this.source=source;this.sender=sender;setFocusable(true);setBackground(new Color(10,17,26));
             addComponentListener(new ComponentAdapter(){public void componentResized(ComponentEvent e){displayWidth=getWidth();displayHeight=getHeight();prepared=null;}});
@@ -371,7 +381,8 @@ public class LanControl {
         void applyName(String s){name=s==null||s.isBlank()?"Komputer "+number:s.trim();title.setText(name);}
         void rename(){String s=(String)JOptionPane.showInputDialog(owner.f,"Nama untuk komputer "+number+" (contoh: Kasir, Lab-02):","Ganti nama",JOptionPane.PLAIN_MESSAGE,null,null,name);if(s!=null){applyName(s);owner.save();}}
         void notice(String text){later(()->{picture.setText(text);noticeUntil=System.currentTimeMillis()+5000;});}
-        void prepareViews(BufferedImage frame){if(largeViews.isEmpty()&&view.isShowing())view.prepare(frame);for(View v:largeViews)if(v.isShowing())v.prepare(frame);}
+        void prepareViews(BufferedImage frame){prepareViews(frame,null);}
+        void prepareViews(BufferedImage frame,List<java.awt.Rectangle> changed){if(largeViews.isEmpty()&&view.isShowing())view.prepare(frame,changed);for(View v:largeViews)if(v.isShowing())v.prepare(frame,changed);}
         void refreshViews(){view.repaint();for(View v:largeViews){if(v.oneToOne)v.revalidate();v.repaint();}}
         void updateStream(){Peer p=peer;if(p==null){if(image==null&&!connecting&&retry==null&&note==null&&System.currentTimeMillis()>noticeUntil)picture.setText(" ");picture.setToolTipText(picture.getText().isBlank()?null:picture.getText());return;}int w=view.getWidth(),h=view.getHeight();
             for(View v:largeViews)if(v.isShowing()){Dimension d=v.oneToOne?new Dimension(3840,2160):v.getSize();if((long)d.width*d.height>(long)w*h){w=d.width;h=d.height;}}

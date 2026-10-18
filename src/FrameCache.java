@@ -59,18 +59,20 @@ class FrameCache {
     }
     static boolean isTiles(byte[] data){return data.length>15&&data[0]==MAGIC[0]&&data[1]==MAGIC[1]&&data[2]==MAGIC[2];}
     /** Master side: paints the tiles onto a copy of the current frame. Returns null when the base frame does not match (a full frame is then requested). */
-    static BufferedImage apply(BufferedImage base,byte[] data)throws IOException{
+    record Applied(BufferedImage image,List<Rectangle> changed) {}
+    static BufferedImage apply(BufferedImage base,byte[] data)throws IOException{Applied a=applyTiles(base,data);return a==null?null:a.image();}
+    static Applied applyTiles(BufferedImage base,byte[] data)throws IOException{
         DataInputStream in=new DataInputStream(new ByteArrayInputStream(data));in.skipNBytes(3);int w=in.readInt(),h=in.readInt(),n=in.readInt();
         if(base==null||base.getWidth()!=w||base.getHeight()!=h||n<0||n>10_000)return null;
         BufferedImage out=new BufferedImage(w,h,BufferedImage.TYPE_INT_RGB);
         if(base.getType()==BufferedImage.TYPE_INT_RGB&&base.getRaster().getDataBuffer() instanceof java.awt.image.DataBufferInt){int[] src=StreamQuality.pixels(StreamQuality.rgb(base));System.arraycopy(src,0,StreamQuality.pixels(out),0,src.length);}
         else {Graphics2D g=out.createGraphics();g.drawImage(base,0,0,null);g.dispose();}
-        Graphics2D g=out.createGraphics();
+        Graphics2D g=out.createGraphics();List<Rectangle> changed=new ArrayList<>(n);
         try{for(int i=0;i<n;i++){int x=in.readInt(),y=in.readInt(),tw=in.readInt(),th=in.readInt(),len=in.readInt();
                 if(x<0||y<0||tw<1||th<1||x+tw>w||y+th>h||len<1||len>data.length)throw new IOException("Potongan layar tidak valid.");
                 byte[] part=in.readNBytes(len);BufferedImage tile=ImageIO.read(new ByteArrayInputStream(part));if(tile==null)throw new IOException("Potongan layar rusak.");
-                g.drawImage(tile,x,y,tw,th,null);}}
+                g.drawImage(tile,x,y,tw,th,null);changed.add(new Rectangle(x,y,tw,th));}}
         finally{g.dispose();}
-        return out;
+        return new Applied(out,changed);
     }
 }

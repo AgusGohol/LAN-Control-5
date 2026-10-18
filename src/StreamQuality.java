@@ -22,10 +22,13 @@ class StreamQuality {
         final Semaphore ready=new Semaphore(WINDOW);final ConcurrentLinkedQueue<Long> inFlight=new ConcurrentLinkedQueue<>();
         volatile double milliseconds=60;volatile double factor=1;
         volatile long interactiveUntil=0;volatile boolean forceKey;
+        /** Earliest moment a frame was requested by input (click, key, scroll); 0 = none. */
+        volatile long wakeAt=0;final Object signal=new Object();
+        static final long NUDGE_DELAY=9_000_000L,MIN_GAP=12_000_000L;
         int slow=0,fast=0;
         void configure(String[] p){try{config=new Config(p[1],Integer.parseInt(p[2]),Integer.parseInt(p[3]),p.length>5&&p[5].equals("TILES"));interval=p.length>4?Math.max(16,Math.min(2000,Integer.parseInt(p[4]))):120;}catch(RuntimeException ignored){}}
         void begin(){inFlight.add(System.nanoTime());}
-        void ack(){Long sent=inFlight.poll();if(sent!=null){sample((System.nanoTime()-sent)/1_000_000.0);ready.release();}}
+        void ack(){Long sent=inFlight.poll();if(sent!=null){sample((System.nanoTime()-sent)/1_000_000.0);ready.release();synchronized(signal){signal.notifyAll();}}}
         /** Round-trip of a frame (send, decode on the master, acknowledgement). Persistent slowness lowers Otomatis resolution; it recovers when fast again. */
         synchronized void sample(double ms){
             milliseconds=milliseconds*.7+ms*.3;
@@ -44,16 +47,25 @@ class StreamQuality {
         /** Input keeps "moving" quality for 1 s; afterwards one sharper frame is sent. */
         void interact(){interactiveUntil=System.nanoTime()+1_000_000_000L;}
         boolean interactive(){return System.nanoTime()<interactiveUntil;}
+        /** Fixed-rate pacing: the next frame starts one interval after this one started (33 ms = 30 fps), not after an extra pause. */
+        void waitNext(long begun)throws InterruptedException{
+            long target=begun+pause()*1_000_000L;
+            while(true){long now=System.nanoTime(),due=target,wake=wakeAt;
+                // Input arrived: capture shortly after it (time for the application to redraw) instead of waiting for the next tick.
+                if(wake!=0&&wake<due)due=Math.max(wake,begun+MIN_GAP);
+                if(now>=due){if(wake!=0&&wake<=now)wakeAt=0;return;}
+                synchronized(signal){signal.wait(Math.max(1,(due-now)/1_000_000));}}
+        }
+        /** Called by the client after applying a click, key or scroll. */
+        void nudge(){long at=System.nanoTime()+NUDGE_DELAY;long w=wakeAt;if(w==0||at<w)wakeAt=at;synchronized(signal){signal.notifyAll();}}
         /** Target time between frame starts (ms). 33 ms = 30 fps. */
-        int pause(){return interactive()?Math.min(interval,33):interval;}
+        int pause(){return interactive()?Math.min(interval,interval<=50?25:33):interval;}
         float quality(){boolean moving=interactive();return switch(config.mode){case "PREVIEW"->.62f;case "HEMAT"->.68f;case "HD"->moving?.82f:.92f;case "NATIVE"->.92f;default->moving?.76f:.88f;};}
         boolean lossless(){return config.mode.equals("NATIVE")&&!interactive();}
     }
     static BufferedImage scale(BufferedImage raw,Dimension size){
         if(size.width==raw.getWidth()&&size.height==raw.getHeight())return rgb(raw);
-        BufferedImage img=new BufferedImage(size.width,size.height,BufferedImage.TYPE_INT_RGB);Graphics2D g=img.createGraphics();
-        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_BILINEAR);g.setRenderingHint(RenderingHints.KEY_RENDERING,RenderingHints.VALUE_RENDER_QUALITY);
-        g.drawImage(raw,0,0,size.width,size.height,null);g.dispose();return img;
+        return FastScale.resize(raw,size.width,size.height);
     }
     /** Image backed by a plain int[] (fast comparisons and copies). */
     static BufferedImage rgb(BufferedImage image){

@@ -43,6 +43,18 @@ class StreamTests {
         check(old.interval==120&&new StreamQuality.State().interval==300,"older master interval honoured");
 
         StreamQuality.State w=new StreamQuality.State();for(int i=0;i<StreamQuality.State.WINDOW;i++){check(w.ready.tryAcquire(),"window slot "+i);w.begin();}check(!w.ready.tryAcquire(),"at most "+StreamQuality.State.WINDOW+" frames in flight");w.ack();check(w.ready.tryAcquire(),"acknowledgement frees a slot");
+        // Master: re-scaling only changed areas must give exactly the same picture as re-scaling the whole frame, and be much cheaper.
+        BufferedImage before=copy(VisualTests.sample(1920,1080)),after=copy(before);Graphics2D q=after.createGraphics();q.setColor(Color.MAGENTA);q.fillRect(700,400,130,70);q.fillRect(64,1000,64,80);q.dispose();
+        List<Rectangle> areas=List.of(new Rectangle(640,384,256,128),new Rectangle(64,960,64,120));
+        BufferedImage incremental=FastScale.update(FastScale.resize(before,1600,900),after,areas),full=FastScale.resize(after,1600,900);
+        check(Arrays.equals(StreamQuality.pixels(incremental),StreamQuality.pixels(full)),"partial re-scale is pixel-identical to a full re-scale");
+        check(FastScale.update(FastScale.resize(before,800,450),after,areas)==null,"strong reductions fall back to the full (averaged) resize");
+        for(int i=0;i<20;i++){FastScale.update(full,after,areas);FastScale.resize(after,1600,900);}
+        long t0=System.nanoTime();for(int i=0;i<20;i++)FastScale.update(full,after,areas);long t1=System.nanoTime();for(int i=0;i<20;i++)FastScale.resize(after,1600,900);long t2=System.nanoTime();
+        check((t1-t0)<(t2-t1),"partial re-scale faster than full ("+(t1-t0)/20_000_000.0+" vs "+(t2-t1)/20_000_000.0+" ms)");
+        BufferedImage java2d=new BufferedImage(1600,900,BufferedImage.TYPE_INT_RGB);Graphics2D lg=java2d.createGraphics();lg.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_BILINEAR);lg.drawImage(after,0,0,1600,900,null);lg.dispose();
+        check(meanDiff(full,java2d)<1.0,"fast scaler looks the same as Java2D bilinear (mean diff "+meanDiff(full,java2d)+")");
+        FrameCache.Applied applied=FrameCache.applyTiles(shown,partial);check(applied!=null&&!applied.changed().isEmpty(),"tile frames report their changed areas");
         pacing();
         System.out.println("PASS: v1.7.0 streaming: tile merge, tiles-only updates, pixel-exact lossless rebuild, JPEG tile fidelity, FRAME_SAME, keyframe request, large-change fallback, old-master compatibility, 2-frame window, ~30 fps over encrypted loopback.");
     }
