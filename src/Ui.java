@@ -64,15 +64,22 @@ class Ui {
         boolean connected(Component child){return child instanceof LanControl.Card card&&(card.peer!=null||card.image!=null||card.retry!=null);}
         Component focused(){if(!focusEnabled)return null;if(preferredFocus!=null&&connected(preferredFocus))return preferredFocus;if(layoutFocus!=null&&connected(layoutFocus))return layoutFocus;for(Component child:getComponents())if(connected(child))return child;return null;}
 
-        int columns(){int width=getParent()==null?getWidth():getParent().getWidth();return width<1150?1:2;}
+        static final int GAP=16,SIDE_SLOT=250,ROW=370,FOCUS_NARROW=560;
+        /** Any number of computers: 1 column on narrow windows, 2 normally, 3 on wide windows with more than 4 computers. */
+        int columns(){int width=getParent()==null?getWidth():getParent().getWidth(),n=getComponentCount();if(width<1150)return 1;return n<=4||width<1700?2:3;}
+        int available(){return getParent()==null?Math.max(getHeight(),740):getParent().getHeight();}
+        /** Height of each computer in the right column of the focus layout (3 fit on screen, more scroll). */
+        int sideSlot(int others){int shown=Math.max(1,Math.min(others,3));return Math.max(SIDE_SLOT,(available()-GAP*(shown-1))/shown);}
         Grid(){setOpaque(false);setLayout(new LayoutManager(){public void addLayoutComponent(String s,Component c){}public void removeLayoutComponent(Component c){}public Dimension minimumLayoutSize(Container c){return new Dimension(480,500);}public Dimension preferredLayoutSize(Container c){return Grid.this.getPreferredSize();}public void layoutContainer(Container c){
-            Component focus=focused();boolean split=focus!=null&&getWidth()>=1400;int gap=16;
+            Component focus=focused();boolean split=focus!=null&&getWidth()>=1400;int gap=GAP,others=getComponentCount()-1;
             for(Component child:getComponents())if(child instanceof LanControl.Card card){boolean show=!split||child==focus||connected(child);if(card.view.isVisible()!=show)card.view.setVisible(show);}
-            if(split){int left=(getWidth()-gap)*68/100,right=getWidth()-gap-left,n=0;focus.setBounds(0,0,left,getHeight());int h=(getHeight()-2*gap)/3;for(Component child:getComponents())if(child!=focus){child.setBounds(left+gap,n*(h+gap),right,n==2?getHeight()-n*(h+gap):h);n++;}return;}
-            if(focus!=null){int y=0;focus.setBounds(0,0,getWidth(),560);y=576;for(Component child:getComponents())if(child!=focus){child.setBounds(0,y,getWidth(),370);y+=386;}return;}
-            int cols=columns(),rows=(getComponentCount()+cols-1)/cols,w=(getWidth()-gap*(cols-1))/cols,h=(getHeight()-gap*(rows-1))/rows;for(int i=0;i<getComponentCount();i++)getComponent(i).setBounds((i%cols)*(w+gap),(i/cols)*(h+gap),w,h);
+            if(split){int left=(getWidth()-gap)*68/100,right=getWidth()-gap-left,n=0,h=sideSlot(others);focus.setBounds(0,0,left,Math.min(getHeight(),available()));for(Component child:getComponents())if(child!=focus){child.setBounds(left+gap,n*(h+gap),right,h);n++;}return;}
+            if(focus!=null){focus.setBounds(0,0,getWidth(),FOCUS_NARROW);int y=FOCUS_NARROW+gap;for(Component child:getComponents())if(child!=focus){child.setBounds(0,y,getWidth(),ROW);y+=ROW+gap;}return;}
+            int cols=columns(),rows=Math.max(1,(getComponentCount()+cols-1)/cols),w=(getWidth()-gap*(cols-1))/cols,h=Math.max(ROW,(getHeight()-gap*(rows-1))/rows);for(int i=0;i<getComponentCount();i++)getComponent(i).setBounds((i%cols)*(w+gap),(i/cols)*(h+gap),w,h);
         }});}
-        public Dimension getPreferredSize(){int width=getParent()==null?1200:getParent().getWidth(),available=getParent()==null?740:getParent().getHeight();if(focused()!=null)return new Dimension(width,width>=1400?Math.max(available,680):560+3*386);int cols=columns(),rows=(getComponentCount()+cols-1)/cols;return new Dimension(width,Math.max(available,rows*370+(rows-1)*16));}
+        public Dimension getPreferredSize(){int width=getParent()==null?1200:getParent().getWidth(),available=available(),others=Math.max(0,getComponentCount()-1);
+            if(focused()!=null){if(width>=1400){int h=sideSlot(others);return new Dimension(width,Math.max(available,others*h+Math.max(0,others-1)*GAP));}return new Dimension(width,FOCUS_NARROW+others*(ROW+GAP));}
+            int cols=columns(),rows=Math.max(1,(getComponentCount()+cols-1)/cols);return new Dimension(width,Math.max(available,rows*ROW+(rows-1)*GAP));}
         public Dimension getPreferredScrollableViewportSize(){return new Dimension(1200,780);}public int getScrollableUnitIncrement(Rectangle r,int o,int d){return 30;}public int getScrollableBlockIncrement(Rectangle r,int o,int d){return 250;}public boolean getScrollableTracksViewportWidth(){return true;}public boolean getScrollableTracksViewportHeight(){return getParent()!=null&&getPreferredSize().height<=getParent().getHeight();}
     }
 }

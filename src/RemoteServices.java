@@ -21,6 +21,8 @@ class RemoteServices implements AutoCloseable {
     static byte[] text(String s){return s.getBytes(StandardCharsets.UTF_8);}
     static Path path(String s)throws IOException{if(s.isBlank())throw new IOException("Isi alamat file/folder klien.");return Path.of(s).toAbsolutePath().normalize();}
     /** Desktop of the logged-in user; on Windows this follows OneDrive/redirected Desktop folders. */
+    /** Windows computer name (shown as the default name of this client on the master). */
+    static String hostName(){String n=System.getenv("COMPUTERNAME");if(n!=null&&!n.isBlank())return n.trim();try{return java.net.InetAddress.getLocalHost().getHostName();}catch(Exception e){return "";}}
     static volatile Path desktopOverride;// tests
     static Path desktop(){
         if(desktopOverride!=null)return desktopOverride;
@@ -61,6 +63,7 @@ class RemoteServices implements AutoCloseable {
             case "VERSION":return text(LanControl.VERSION);
             case "DESKTOP":return text(desktop().toString());
             case "PRIVILEGE":return text(privilege);
+            case "HOSTNAME":return text(hostName());
             case "ELEVATE": {
                 if("ADMIN".equals(privilege))throw new IOException("Klien sudah berjalan sebagai Administrator.");
                 Runnable elevate=onElevate;if(elevate==null)throw new IOException("Klien ini tidak dapat meminta izin Administrator.");

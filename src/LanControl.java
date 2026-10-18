@@ -17,7 +17,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LanControl {
-    static final String VERSION="1.7.2",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
+    static final String VERSION="1.8.0",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
     static final int PORT=45851, MAX=8*1024*1024;
     static volatile boolean justUpdated;
     static final Color BG=Ui.BG, PANEL=Ui.SURFACE, TEXT=Ui.TEXT;
@@ -351,14 +351,15 @@ List<java.awt.Rectangle> changed=null;
         }
     }
     static class Card extends Ui.RoundPanel {
-        final int number;final Controller owner;volatile Peer peer;volatile BufferedImage image;final JTextField ip=new JTextField(14);final JCheckBox selected=new JCheckBox("Pilih");
+        int number;JLabel numberLabel;final Controller owner;volatile Peer peer;volatile BufferedImage image;final JTextField ip=new JTextField(14);final JCheckBox selected=new JCheckBox("Pilih");
         final JLabel title,status=Ui.label("Offline",12,true,Ui.MUTED),picture=Ui.label(" ",11,false,Ui.MUTED);final View view;
         boolean connecting,wanted;volatile boolean expectRestart;volatile String privilege;String host="";int attempts;javax.swing.Timer retry;String name,note;long noticeUntil;
         final List<View> largeViews=new CopyOnWriteArrayList<>();String mode="AUTO";
         Card(int n,Controller owner){super(new BorderLayout(0,12));number=n;this.owner=owner;name="Komputer "+n;
-            JPanel head=Ui.transparent(new BorderLayout());JPanel identity=Ui.transparent(new FlowLayout(FlowLayout.LEFT,9,0));identity.add(Ui.label(String.format("%02d",n),13,true,Ui.ACCENT));
-            title=Ui.label(name,16,true,Ui.TEXT);title.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));title.setToolTipText("Klik untuk mengganti nama komputer ini");title.addMouseListener(new MouseAdapter(){public void mouseClicked(MouseEvent e){rename();}});identity.add(title);head.add(identity);
-            status.addMouseListener(new MouseAdapter(){public void mouseClicked(MouseEvent e){privilegeHelp();}});selected.setOpaque(false);JPanel choose=Ui.transparent(new FlowLayout(FlowLayout.RIGHT,6,0));choose.add(button("Fokus",()->owner.focus(this)));choose.add(selected);head.add(choose,BorderLayout.EAST);
+            JPanel head=Ui.transparent(new BorderLayout());JPanel identity=Ui.transparent(new FlowLayout(FlowLayout.LEFT,9,0));numberLabel=Ui.label(String.format("%02d",n),13,true,Ui.ACCENT);identity.add(numberLabel);
+            title=Ui.label(name,16,true,Ui.TEXT);title.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));title.setToolTipText("Klik untuk mengganti nama komputer ini");title.addMouseListener(new MouseAdapter(){public void mouseClicked(MouseEvent e){rename();}});identity.add(title);
+            JButton edit=button("✎ Ubah nama",this::rename);edit.setFont(new Font(Ui.FONT,Font.PLAIN,12));edit.setBorder(BorderFactory.createEmptyBorder(4,8,4,8));edit.setToolTipText("Ganti nama komputer ini, misalnya Kasir 1, Lab-02, Ruang Guru");identity.add(edit);head.add(identity);
+            status.addMouseListener(new MouseAdapter(){public void mouseClicked(MouseEvent e){privilegeHelp();}});selected.setOpaque(false);JPanel choose=Ui.transparent(new FlowLayout(FlowLayout.RIGHT,6,0));choose.add(button("Fokus",()->owner.focus(this)));choose.add(selected);JButton remove=button("✕",()->owner.removeCard(this));remove.setToolTipText("Hapus komputer ini dari daftar");choose.add(remove);head.add(choose,BorderLayout.EAST);
             JPanel address=Ui.transparent(new BorderLayout(8,0));ip.setToolTipText("IP LAN atau Tailscale klien");ip.addActionListener(e->connect());address.add(ip);JPanel connect=Ui.transparent(new GridLayout(1,2,6,0));connect.add(Ui.primary("Hubungkan",this::connect));connect.add(button("Putus",this::disconnect));address.add(connect,BorderLayout.EAST);
             JPanel upper=Ui.transparent(new BorderLayout(0,12));upper.add(head,BorderLayout.NORTH);upper.add(address);add(upper,BorderLayout.NORTH);
             view=new View(()->image,msg->{Peer p=peer;if(p!=null)p.send(msg);});view.shortcut=key->{Peer p=peer;if(p!=null)p.shortcut(key);};view.drop=items->owner.sendFiles(List.of(this),items,view);add(view);
@@ -380,7 +381,13 @@ List<java.awt.Rectangle> changed=null;
             WORK.submit(()->{try{p.rpc("ELEVATE");}catch(Exception e){expectRestart=false;String m=message(e);later(()->{noticeUntil=0;error(owner.f,new Exception(m.contains("tidak dikenal")?"Klien belum v1.6.2. Tunggu klien diperbarui otomatis, lalu coba lagi.":m));});}});
         }
         void applyName(String s){name=s==null||s.isBlank()?"Komputer "+number:s.trim();title.setText(name);}
-        void rename(){String s=(String)JOptionPane.showInputDialog(owner.f,"Nama untuk komputer "+number+" (contoh: Kasir, Lab-02):","Ganti nama",JOptionPane.PLAIN_MESSAGE,null,null,name);if(s!=null){applyName(s);owner.save();}}
+        /** New position after another computer was removed; a default name follows the number. */
+        void renumber(int n){boolean defaultName=name.equals("Komputer "+number);number=n;numberLabel.setText(String.format("%02d",n));if(defaultName)applyName("");}
+        static final int NAME_LIMIT=40;
+        boolean defaultName(){return name.equals("Komputer "+number);}
+        void rename(){String s=(String)JOptionPane.showInputDialog(owner.f,"Nama untuk komputer nomor "+number+"\n(contoh: Kasir 1, Lab-02, Ruang Guru). Kosongkan untuk kembali ke \"Komputer "+number+"\".","Ubah nama komputer",JOptionPane.PLAIN_MESSAGE,null,null,name);
+            if(s!=null){applyName(cleanName(s));owner.save();}}
+        static String cleanName(String s){String t=s.replaceAll("[\\p{Cntrl}]","").trim();return t.length()>NAME_LIMIT?t.substring(0,NAME_LIMIT).trim():t;}
         void notice(String text){later(()->{picture.setText(text);noticeUntil=System.currentTimeMillis()+5000;});}
         void prepareViews(BufferedImage frame){prepareViews(frame,null);}
         void prepareViews(BufferedImage frame,List<java.awt.Rectangle> changed){if(largeViews.isEmpty()&&view.isShowing())view.prepare(frame,changed);for(View v:largeViews)if(v.isShowing())v.prepare(frame,changed);}
@@ -408,7 +415,7 @@ List<java.awt.Rectangle> changed=null;
             if(host.isEmpty()||pass.length()<12){wanted=false;if(!silent)error(owner.f,new Exception("Isi IP klien dan kode minimal 12 karakter."));else {status.setText("Isi IP dan kode");status.setForeground(Ui.WARN);}return;}
             connecting=true;status.setText("Menghubungkan...");status.setForeground(Ui.ACCENT);int port=owner.port;
             WORK.submit(()->{try{Wire w=dial(host,port,pass,5000);Peer p=new Peer(w,this);
-                    later(()->{connecting=false;if(!wanted){p.close();status.setText("Offline");status.setForeground(Ui.MUTED);return;}peer=p;attempts=0;note=null;expectRestart=false;privilege=null;this.host=host;showOnline();p.start();updateStream();owner.save();owner.checkVersion(this,p,host);owner.checkPrivilege(this,p);});}
+                    later(()->{connecting=false;if(!wanted){p.close();status.setText("Offline");status.setForeground(Ui.MUTED);return;}peer=p;attempts=0;note=null;expectRestart=false;privilege=null;this.host=host;showOnline();p.start();updateStream();owner.save();owner.checkVersion(this,p,host);owner.checkPrivilege(this,p);owner.checkName(this,p);});}
                 catch(Exception e){String reason=connectionReason(e);boolean fatal=e instanceof BadCodeException;
                     later(()->{connecting=false;if(!wanted)return;
                         if(retryOnFail&&!fatal&&(owner.reconnect.isSelected()||expectRestart)){scheduleRetry(reason);return;}
@@ -429,7 +436,7 @@ List<java.awt.Rectangle> changed=null;
         final JPanel updateBar=Ui.transparent(new Ui.WrapLayout(FlowLayout.LEFT,8,2));final JLabel updateLabel=Ui.label(" ",13,true,Ui.WARN);javax.swing.Timer updateTimer;
         volatile String pendingVersion;volatile long lastInput=System.currentTimeMillis();long postponeUntil,lastCheck,updatedUntil;int countdown=-1;boolean checking,installing,onlineChecking;long nextOnline=System.currentTimeMillis()+20_000;
         final Set<String> pushed=ConcurrentHashMap.newKeySet();java.util.concurrent.Callable<byte[]> ownJar=()->java.nio.file.Files.readAllBytes(RemoteServices.Startup.jar());final JComboBox<String> quality=new JComboBox<>(MODES);
-        final JFrame f;final boolean preview;int port=PORT;final JPanel dashboard=new JPanel(new BorderLayout(0,12));final JPasswordField password=new JPasswordField(18);final List<Card> cards=new ArrayList<>();final Set<JFrame> remotes=new HashSet<>();final JLabel count=Ui.label("0 / 4 klien online",13,true,Ui.ACCENT);final javax.swing.Timer timer;
+        final JFrame f;final boolean preview;int port=PORT;final JPanel dashboard=new JPanel(new BorderLayout(0,12));final JPasswordField password=new JPasswordField(18);final List<Card> cards=new ArrayList<>();final Set<JFrame> remotes=new HashSet<>();final JLabel count=Ui.label("0 / 4 klien online",13,true,Ui.ACCENT);JScrollPane gridScroll;final javax.swing.Timer timer;
         Path settingsFile=Settings.file("controller.properties");volatile String protectedCode;String protectedPlain;long alerted;
         Controller(){this(false);}
         Controller(boolean preview){this.preview=preview;
@@ -441,24 +448,59 @@ List<java.awt.Rectangle> changed=null;
             access.add(Ui.label("Kualitas",12,true,Ui.MUTED));quality.setPreferredSize(new Dimension(135,36));quality.addActionListener(e->{for(Card c:cards)c.mode=modeCode(quality.getSelectedIndex());save();});access.add(quality);
             access.add(Ui.primary("Hubungkan semua",this::connectAll));access.add(button("Putus semua",()->cards.forEach(Card::disconnect)));toolbar.add(access,BorderLayout.NORTH);
             password.addFocusListener(new FocusAdapter(){public void focusLost(FocusEvent e){if(remember.isSelected())rememberCode();}});
-            JPanel actions=Ui.transparent(new Ui.WrapLayout(FlowLayout.LEFT,8,5));actions.add(button("Pilih semua",()->cards.forEach(c->c.selected.setSelected(true))));actions.add(button("Batal pilih",()->cards.forEach(c->c.selected.setSelected(false))));actions.add(Ui.primary("Kontrol serentak",()->{Card c=cards.stream().filter(x->x.selected.isSelected()&&x.peer!=null).findFirst().orElse(null);if(c==null)error(f,new Exception("Hubungkan dan centang minimal satu klien."));else open(c,true);}));actions.add(button("Lepaskan tombol",this::reset));toolbar.add(actions,BorderLayout.CENTER);
+            JPanel actions=Ui.transparent(new Ui.WrapLayout(FlowLayout.LEFT,8,5));actions.add(button("Pilih semua",()->cards.forEach(c->c.selected.setSelected(true))));actions.add(button("Batal pilih",()->cards.forEach(c->c.selected.setSelected(false))));actions.add(Ui.primary("Kontrol serentak",()->{Card c=cards.stream().filter(x->x.selected.isSelected()&&x.peer!=null).findFirst().orElse(null);if(c==null)error(f,new Exception("Hubungkan dan centang minimal satu klien."));else open(c,true);}));actions.add(button("Lepaskan tombol",this::reset));actions.add(Ui.primary("+ Tambah komputer",this::askNewCard));toolbar.add(actions,BorderLayout.CENTER);
             JPanel top=Ui.transparent(new BorderLayout(0,12));top.add(heading,BorderLayout.NORTH);top.add(toolbar);dashboard.add(top,BorderLayout.NORTH);
             updateBar.add(updateLabel);updateBar.add(Ui.primary("Mulai ulang sekarang",this::installUpdate));updateBar.add(button("Tunda 30 menit",()->{postponeUntil=System.currentTimeMillis()+30*60_000;countdown=-1;tickUpdate();}));updateBar.setVisible(false);top.add(updateBar,BorderLayout.SOUTH);
-            for(int i=1;i<=4;i++){Card c=new Card(i,this);cards.add(c);grid.add(c);}JScrollPane scroll=new JScrollPane(grid);scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);scroll.getViewport().setBackground(Ui.BG);scroll.getVerticalScrollBar().setUnitIncrement(28);dashboard.add(scroll);
+            for(int i=1;i<=4;i++){Card c=new Card(i,this);cards.add(c);grid.add(c);}JScrollPane scroll=new JScrollPane(grid);gridScroll=scroll;scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);scroll.getViewport().setBackground(Ui.BG);scroll.getVerticalScrollBar().setUnitIncrement(28);dashboard.add(scroll);
             dashboard.add(Ui.label("Klik layar untuk mengontrol  /  Perbesar untuk membaca detail  /  Ctrl+C dan Ctrl+V untuk teks  /  Klik nama komputer untuk mengganti nama",12,false,Ui.MUTED),BorderLayout.SOUTH);
             focusLayout=new JCheckBox("Fokus klien aktif",true);focusLayout.setOpaque(false);focusLayout.setToolTipText("Pertahankan satu layar besar. Gunakan tombol Fokus untuk memilih klien.");focusLayout.addActionListener(e->{grid.focusEnabled=focusLayout.isSelected();grid.revalidate();grid.repaint();save();});actions.add(focusLayout);
             autoUpdate.setOpaque(false);autoUpdate.setToolTipText("Saat terhubung, klien versi lama otomatis menerima versi komputer utama ini lalu mulai ulang.");autoUpdate.addActionListener(e->save());actions.add(autoUpdate);
             onlineUpdate.setOpaque(false);onlineUpdate.setEnabled(!Updater.repository.isBlank());onlineUpdate.setToolTipText(Updater.repository.isBlank()?"Sumber pembaruan internet belum diatur di versi ini.":"Periksa rilis bertanda tangan di github.com/"+Updater.repository+" saat dibuka dan setiap 6 jam.");onlineUpdate.addActionListener(e->{save();nextOnline=0;});actions.add(onlineUpdate);
             reconnect.setOpaque(false);reconnect.setToolTipText("Jika koneksi putus (Wi-Fi, restart klien), utama mencoba menyambung kembali sampai Anda klik Putus.");reconnect.addActionListener(e->{if(!reconnect.isSelected())for(Card c:cards)if(c.retry!=null){c.stopRetry();c.wanted=false;c.status.setText("Offline");c.status.setForeground(Ui.MUTED);}save();});actions.add(reconnect);
-            timer=new javax.swing.Timer(700,e->{grid.refreshFocus();count.setText(cards.stream().filter(c->c.peer!=null&&c.peer.alive).count()+" / 4 klien online");cards.forEach(Card::updateStream);});
+            timer=new javax.swing.Timer(700,e->{grid.refreshFocus();updateCount();cards.forEach(Card::updateStream);});
             if(!preview){Icons.apply(f,Icons.UTAMA);WORK.submit(()->Icons.ensure(Icons.UTAMA,()->""));Toolkit.getDefaultToolkit().addAWTEventListener(e->lastInput=System.currentTimeMillis(),AWTEvent.KEY_EVENT_MASK|AWTEvent.MOUSE_EVENT_MASK|AWTEvent.MOUSE_MOTION_EVENT_MASK|AWTEvent.MOUSE_WHEEL_EVENT_MASK);
                 if(justUpdated)updatedUntil=System.currentTimeMillis()+30_000;updateTimer=new javax.swing.Timer(1000,e->tickUpdate());updateTimer.start();load();f.addWindowListener(new WindowAdapter(){public void windowClosing(WindowEvent e){saveNow();}});f.add(dashboard);f.setSize(1400,1000);f.setLocationRelativeTo(null);f.setVisible(true);timer.start();}
+        }
+        static final int MAX_CARDS=200;
+        void updateCount(){count.setText(cards.stream().filter(c->c.peer!=null&&c.peer.alive).count()+" / "+cards.size()+" klien online");}
+        /** Adds an empty computer at the end of the list and scrolls to it. */
+        Card addCard(){
+            if(cards.size()>=MAX_CARDS){error(f,new Exception("Maksimal "+MAX_CARDS+" komputer."));return cards.get(cards.size()-1);}
+            Card c=new Card(cards.size()+1,this);c.mode=modeCode(Math.max(0,quality.getSelectedIndex()));cards.add(c);grid.add(c);grid.revalidate();grid.repaint();updateCount();
+            later(()->{grid.revalidate();c.scrollRectToVisible(new Rectangle(0,0,c.getWidth(),Math.max(1,c.getHeight())));});return c;
+        }
+        /** "+ Tambah komputer": asks for a name and IP (both optional) and connects right away when an IP and the code are known. */
+        void askNewCard(){
+            JTextField nameField=new JTextField(22),ipField=new JTextField(22);JPanel form=new JPanel(new GridLayout(0,1,0,6));
+            form.add(new JLabel("Nama komputer (boleh dikosongkan), contoh: Kasir 1, Lab-02"));form.add(nameField);form.add(new JLabel("Alamat IP klien (boleh diisi nanti)"));form.add(ipField);
+            if(JOptionPane.showConfirmDialog(f,form,"Tambah komputer",JOptionPane.OK_CANCEL_OPTION,JOptionPane.PLAIN_MESSAGE)!=JOptionPane.OK_OPTION)return;
+            Card c=addCard();String name=Card.cleanName(nameField.getText());if(!name.isEmpty())c.applyName(name);c.ip.setText(ipField.getText().trim());save();
+            if(!c.ip.getText().isEmpty()&&password.getPassword().length>=12)c.connect();else c.ip.requestFocusInWindow();
+        }
+        /** A computer still called "Komputer N" takes the client's Windows computer name when it connects. */
+        void checkName(Card card,Peer p){
+            if(!card.defaultName())return;
+            WORK.submit(()->{String host;try{host=Card.cleanName(string(p.rpc("HOSTNAME")));}catch(Exception e){return;}
+                if(host.isEmpty())return;later(()->{if(card.peer==p&&card.defaultName()){card.applyName(host);save();card.notice("Nama diambil dari nama komputer Windows. Klik ✎ Ubah nama untuk menggantinya.");}});});
+        }
+        void setCardCount(int n){while(cards.size()<n)addCard();while(cards.size()>n&&cards.size()>1)discard(cards.get(cards.size()-1));}
+        /** Removes a computer after confirmation; it is disconnected and its open windows are closed. */
+        void removeCard(Card card){
+            if(cards.size()<=1){error(f,new Exception("Minimal satu komputer harus ada."));return;}
+            String detail=card.ip.getText().trim().isEmpty()?"":" ("+card.ip.getText().trim()+")";
+            if(!preview&&JOptionPane.showConfirmDialog(f,"Hapus "+card.name+detail+" dari daftar?"+(card.peer!=null?"\nKoneksinya akan diputus.":""),"Hapus komputer",JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return;
+            discard(card);save();
+        }
+        void discard(Card card){
+            card.disconnect();for(View v:card.largeViews){Window w=SwingUtilities.getWindowAncestor(v);if(w!=null)w.dispose();}
+            cards.remove(card);grid.remove(card);if(grid.preferredFocus==card)grid.preferredFocus=null;if(grid.layoutFocus==card)grid.layoutFocus=null;
+            for(int i=0;i<cards.size();i++)cards.get(i).renumber(i+1);grid.revalidate();grid.repaint();updateCount();
         }
         void alertOnce(String text){long now=System.currentTimeMillis();if(now-alerted<5000)return;alerted=now;error(f,new Exception(text));}
         void connectAll(){boolean any=false;for(Card c:cards)if(!c.ip.getText().trim().isEmpty()){any=true;c.connectQuietly(reconnect.isSelected());}
             if(!any)error(f,new Exception("Isi IP minimal satu komputer terlebih dahulu."));else if(remember.isSelected())rememberCode();}
         Properties snapshot(){Properties p=new Properties();
-            for(Card c:cards){p.setProperty("card."+c.number+".ip",c.ip.getText().trim());p.setProperty("card."+c.number+".name",c.name);}
+            p.setProperty("cards",Integer.toString(cards.size()));for(Card c:cards){p.setProperty("card."+c.number+".ip",c.ip.getText().trim());p.setProperty("card."+c.number+".name",c.name);}
             p.setProperty("quality",modeCode(Math.max(0,quality.getSelectedIndex())));p.setProperty("focus",Boolean.toString(focusLayout.isSelected()));p.setProperty("reconnect",Boolean.toString(reconnect.isSelected()));p.setProperty("remember",Boolean.toString(remember.isSelected()));p.setProperty("autoUpdate",Boolean.toString(autoUpdate.isSelected()));p.setProperty("onlineUpdate",Boolean.toString(onlineUpdate.isSelected()));
             String code=protectedCode;if(remember.isSelected()&&code!=null)p.setProperty("code",code);return p;}
         boolean loading;
@@ -530,6 +572,7 @@ List<java.awt.Rectangle> changed=null;
                 catch(Exception e){card.expectRestart=false;if(p.alive)card.notice("Pembaruan klien gagal: "+message(e));}});
         }
         void apply(Properties p){
+            int saved;try{saved=Integer.parseInt(p.getProperty("cards","4"));}catch(NumberFormatException e){saved=4;}setCardCount(Math.max(1,Math.min(MAX_CARDS,saved)));
             for(Card c:cards){c.ip.setText(p.getProperty("card."+c.number+".ip",""));c.applyName(p.getProperty("card."+c.number+".name",""));}
             int q=MODE_CODES.indexOf(p.getProperty("quality","AUTO"));quality.setSelectedIndex(Math.max(0,q));
             focusLayout.setSelected(!"false".equals(p.getProperty("focus")));grid.focusEnabled=focusLayout.isSelected();reconnect.setSelected(!"false".equals(p.getProperty("reconnect")));remember.setSelected("true".equals(p.getProperty("remember")));autoUpdate.setSelected(!"false".equals(p.getProperty("autoUpdate")));onlineUpdate.setSelected(!"false".equals(p.getProperty("onlineUpdate")));
