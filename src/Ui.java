@@ -13,6 +13,12 @@ class Ui {
         for(String key:new String[]{"Label","Button","CheckBox","TextField","PasswordField","ComboBox","Table","TableHeader","TextArea","TabbedPane"})UIManager.put(key+".foreground",TEXT);
         for(String key:new String[]{"TextField","PasswordField","ComboBox","TextArea","Table"})UIManager.put(key+".background",FIELD);
         UIManager.put("TextField.caretForeground",TEXT);UIManager.put("PasswordField.caretForeground",TEXT);UIManager.put("TextArea.caretForeground",TEXT);
+        // Plain JButtons (JOptionPane OK/Cancel, file chooser): dark fill so the light Button.foreground stays readable.
+        // Metal/Ocean paints Button.gradient over the background, so the gradient must be dark too.
+        javax.swing.plaf.ColorUIResource buttonFill=new javax.swing.plaf.ColorUIResource(38,54,73);
+        UIManager.put("Button.background",buttonFill);UIManager.put("Button.gradient",java.util.Arrays.asList(.3f,0f,buttonFill,buttonFill,buttonFill));
+        UIManager.put("Button.select",new javax.swing.plaf.ColorUIResource(32,93,93));UIManager.put("Button.focus",ACCENT);UIManager.put("Button.disabledText",MUTED);
+        UIManager.put("Button.border",new javax.swing.plaf.BorderUIResource(new CompoundBorder(new LineBorder(LINE,1,true),new EmptyBorder(6,18,6,18))));
         UIManager.put("OptionPane.messageForeground",TEXT);UIManager.put("Table.gridColor",LINE);UIManager.put("TableHeader.background",SURFACE);
         UIManager.put("Table.selectionBackground",new Color(32,93,93));UIManager.put("Table.selectionForeground",TEXT);
         UIManager.put("ComboBox.selectionBackground",new Color(32,93,93));UIManager.put("ComboBox.selectionForeground",TEXT);
