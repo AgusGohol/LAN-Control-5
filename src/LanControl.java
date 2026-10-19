@@ -17,7 +17,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LanControl {
-    static final String VERSION="1.9.0",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
+    static final String VERSION="1.10.0",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
     static final int PORT=45851, MAX=8*1024*1024;
     static volatile boolean justUpdated;
     static final Color BG=Ui.BG, PANEL=Ui.SURFACE, TEXT=Ui.TEXT;
@@ -316,17 +316,27 @@ List<java.awt.Rectangle> changed=null;
     /** Special key combinations the master's own Windows would otherwise intercept. */
     static final String[] COMBO_NAMES={"Tombol Windows  (menu Start)","Win + D  (tampilkan desktop)","Win + E  (File Explorer)","Win + R  (Run)","Win + Shift + S  (potong layar)","Alt + Tab  (ganti jendela)","Alt + F4  (tutup jendela aktif di klien)","Ctrl + Shift + Esc  (Task Manager)","Print Screen"};
     static final int[][] COMBOS={{KeyEvent.VK_WINDOWS},{KeyEvent.VK_WINDOWS,KeyEvent.VK_D},{KeyEvent.VK_WINDOWS,KeyEvent.VK_E},{KeyEvent.VK_WINDOWS,KeyEvent.VK_R},{KeyEvent.VK_WINDOWS,KeyEvent.VK_SHIFT,KeyEvent.VK_S},{KeyEvent.VK_ALT,KeyEvent.VK_TAB},{KeyEvent.VK_ALT,KeyEvent.VK_F4},{KeyEvent.VK_CONTROL,KeyEvent.VK_SHIFT,KeyEvent.VK_ESCAPE},{KeyEvent.VK_PRINTSCREEN}};
+    /** v1.10.0: keyboard equivalents, pressed while the client screen has focus. The real combinations are caught by the master's own Windows. */
+    static final String[] COMBO_KEYS={"Ctrl+Alt+W","Ctrl+Alt+D","Ctrl+Alt+E","Ctrl+Alt+R","Ctrl+Alt+S","Alt+Page Up","Ctrl+Alt+F4","Ctrl+Alt+Esc","Ctrl+Alt+P"};
+    static final int[] COMBO_HOTKEYS={KeyEvent.VK_W,KeyEvent.VK_D,KeyEvent.VK_E,KeyEvent.VK_R,KeyEvent.VK_S,0,KeyEvent.VK_F4,KeyEvent.VK_ESCAPE,KeyEvent.VK_P};
+    /** Ctrl+Alt+key → the client combination, or null. Numpad + is Print Screen as in Windows Remote Desktop. */
+    static int[] hotkey(int key){if(key==KeyEvent.VK_ADD)return new int[]{KeyEvent.VK_PRINTSCREEN};for(int i=0;i<COMBO_HOTKEYS.length;i++)if(COMBO_HOTKEYS[i]!=0&&COMBO_HOTKEYS[i]==key)return COMBOS[i];return null;}
+    static final String RESET_KEY="Ctrl+Alt+K";
+    static String menuText(String name,String keys){return "<html><table cellpadding=0 cellspacing=0 width=430><tr><td>"+name+"</td><td align=right><font color=#B1C0D3>"+keys+"</font></td></tr></table></html>";}
     static void combo(Sender sender,int... keys){for(int k:keys)sender.send("KEYDOWN "+k);for(int i=keys.length-1;i>=0;i--)sender.send("KEYUP "+keys[i]);}
     static JButton shortcutsButton(String text,java.util.function.Supplier<Sender> target,Runnable after){
         JPopupMenu menu=new JPopupMenu();JButton[] holder=new JButton[1];
-        for(int i=0;i<COMBOS.length;i++){int[] keys=COMBOS[i];JMenuItem item=new JMenuItem(COMBO_NAMES[i]);item.addActionListener(e->{Sender s=target.get();if(s!=null){combo(s,keys);after.run();}});menu.add(item);}
+        for(int i=0;i<COMBOS.length;i++){int[] keys=COMBOS[i];JMenuItem item=new JMenuItem(menuText(COMBO_NAMES[i],COMBO_KEYS[i]));item.addActionListener(e->{Sender s=target.get();if(s!=null){combo(s,keys);after.run();}});menu.add(item);}
+        menu.addSeparator();JMenuItem hint=new JMenuItem("Pakai keyboard: klik layar klien dulu, lalu tekan kombinasi di kanan.");hint.setEnabled(false);menu.add(hint);
         menu.addSeparator();JMenuItem cad=new JMenuItem("Ctrl + Alt + Del  (tidak didukung: layar aman Windows)");cad.setEnabled(false);menu.add(cad);
-        JMenuItem reset=new JMenuItem("Lepaskan semua tombol");reset.addActionListener(e->{Sender s=target.get();if(s!=null){s.send("RESET");after.run();}});menu.add(reset);
-        holder[0]=button(text,()->menu.show(holder[0],0,holder[0].getHeight()));holder[0].setToolTipText("Kirim kombinasi tombol yang tidak dapat diteruskan langsung dari keyboard komputer utama");return holder[0];
+        JMenuItem reset=new JMenuItem(menuText("Lepaskan semua tombol",RESET_KEY));reset.addActionListener(e->{Sender s=target.get();if(s!=null){s.send("RESET");after.run();}});menu.add(reset);
+        holder[0]=button(text,()->menu.show(holder[0],0,holder[0].getHeight()));holder[0].setToolTipText("Kirim kombinasi tombol yang tidak dapat diteruskan langsung dari keyboard komputer utama. Bisa juga lewat keyboard, misalnya Ctrl+Alt+E untuk Win+E dan Alt+Page Up untuk Alt+Tab.");return holder[0];
     }
     static class View extends JPanel implements Scrollable {
         final java.util.function.Supplier<BufferedImage> source;final Sender sender;
         Rectangle area=new Rectangle();boolean dragging=false;volatile boolean oneToOne=false,stretch=false;java.util.function.IntConsumer shortcut;java.util.function.BooleanSupplier escape=()->false;final Set<Integer> swallowed=new HashSet<>();
+        /** Ctrl/Alt released on the client for a keyboard shortcut while still held here; pressed again before the next ordinary key. */
+        final Set<Integer> lifted=new LinkedHashSet<>();
         volatile int displayWidth,displayHeight;volatile Prepared prepared;double wheel=0;
         /** Files/folders dropped from Windows Explorer onto the client screen; null disables dropping. */
         java.util.function.Consumer<List<java.nio.file.Path>> drop;volatile boolean dragOver;
@@ -349,13 +359,20 @@ List<java.awt.Rectangle> changed=null;
                 // Touchpads report fractional rotation (getWheelRotation()==0); accumulate until a whole notch is reached.
                 public void mouseWheelMoved(MouseWheelEvent e){if(!area.contains(e.getPoint()))return;wheel+=e.getPreciseWheelRotation();int notches=(int)wheel;if(notches!=0){wheel-=notches;sender.send("WHEEL "+notches);}}
             };addMouseListener(m);addMouseMotionListener(m);addMouseWheelListener(m);
-            addKeyListener(new KeyAdapter(){public void keyPressed(KeyEvent e){int k=e.getKeyCode();
-                if(k==KeyEvent.VK_ESCAPE&&escape.getAsBoolean()){swallowed.add(k);}
-                else if(swallowed.contains(k)){}
+            addKeyListener(new KeyAdapter(){public void keyPressed(KeyEvent e){int k=e.getKeyCode();boolean ctrlAlt=e.isControlDown()&&e.isAltDown()&&!e.isShiftDown()&&!e.isMetaDown();int[] mapped=ctrlAlt?hotkey(k):null;
+                if(swallowed.contains(k)){}
+                else if(mapped!=null||(ctrlAlt&&k==KeyEvent.VK_K)){swallowed.add(k);lift();if(mapped!=null)combo(sender,mapped);else sender.send("RESET");}
+                else if(e.isAltDown()&&!e.isControlDown()&&(k==KeyEvent.VK_PAGE_UP||k==KeyEvent.VK_PAGE_DOWN)){swallowed.add(k);restore(e);
+                    // Alt stays held on the client, so the task switcher stays open until Alt is released here.
+                    if(k==KeyEvent.VK_PAGE_DOWN)sender.send("KEYDOWN "+KeyEvent.VK_SHIFT);sender.send("KEYDOWN "+KeyEvent.VK_TAB);sender.send("KEYUP "+KeyEvent.VK_TAB);if(k==KeyEvent.VK_PAGE_DOWN)sender.send("KEYUP "+KeyEvent.VK_SHIFT);}
+                else if(k==KeyEvent.VK_ESCAPE&&escape.getAsBoolean()){swallowed.add(k);}
                 else if(shortcut!=null&&e.isControlDown()&&!e.isAltDown()&&!e.isShiftDown()&&(k==KeyEvent.VK_C||k==KeyEvent.VK_V)){swallowed.add(k);shortcut.accept(k);}
-                else if(k!=KeyEvent.VK_UNDEFINED)sender.send("KEYDOWN "+k);e.consume();}
-                public void keyReleased(KeyEvent e){if(!swallowed.remove(e.getKeyCode()))sender.send("KEYUP "+e.getKeyCode());e.consume();}});
-            setFocusTraversalKeysEnabled(false);addFocusListener(new FocusAdapter(){public void focusLost(FocusEvent e){dragging=false;swallowed.clear();wheel=0;sender.send("RESET");}});
+                else if(k!=KeyEvent.VK_UNDEFINED){restore(e);sender.send("KEYDOWN "+k);}e.consume();}
+                public void keyReleased(KeyEvent e){int k=e.getKeyCode();if(!swallowed.remove(k)&&!lifted.remove(k))sender.send("KEYUP "+k);e.consume();}
+                /** Release Alt before Ctrl on the client: Alt let go while Ctrl is down never opens an application's menu bar. */
+                void lift(){for(int m:new int[]{KeyEvent.VK_ALT,KeyEvent.VK_CONTROL})if(lifted.add(m))sender.send("KEYUP "+m);}
+                void restore(KeyEvent e){for(int m:new int[]{KeyEvent.VK_CONTROL,KeyEvent.VK_ALT})if(lifted.contains(m)&&(m==KeyEvent.VK_CONTROL?e.isControlDown():e.isAltDown()))sender.send("KEYDOWN "+m);lifted.clear();}});
+            setFocusTraversalKeysEnabled(false);addFocusListener(new FocusAdapter(){public void focusLost(FocusEvent e){dragging=false;swallowed.clear();lifted.clear();wheel=0;sender.send("RESET");}});
             if(!GraphicsEnvironment.isHeadless())new java.awt.dnd.DropTarget(this,java.awt.dnd.DnDConstants.ACTION_COPY,new java.awt.dnd.DropTargetAdapter(){
                 boolean accept(java.awt.dnd.DropTargetDragEvent e){boolean ok=drop!=null&&source.get()!=null&&e.isDataFlavorSupported(java.awt.datatransfer.DataFlavor.javaFileListFlavor);if(ok)e.acceptDrag(java.awt.dnd.DnDConstants.ACTION_COPY);else e.rejectDrag();if(dragOver!=ok){dragOver=ok;repaint();}return ok;}
                 public void dragEnter(java.awt.dnd.DropTargetDragEvent e){accept(e);}public void dragOver(java.awt.dnd.DropTargetDragEvent e){accept(e);}
@@ -705,6 +722,7 @@ List<java.awt.Rectangle> changed=null;
             PrivilegeTests.run();
             StreamTests.run();
             MultiMasterTests.run();
+            KeyboardShortcutTests.run();
         }
     }
 }

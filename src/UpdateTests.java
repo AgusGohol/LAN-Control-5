@@ -52,7 +52,9 @@ class UpdateTests {
             try{LanControl.dial("127.0.0.1",port,"salah-kode-1234",3000);throw new AssertionError("wrong code must fail");}catch(LanControl.BadCodeException expected){check(LanControl.connectionReason(expected).contains("berbeda"),"wrong code reason");}
             release.countDown();for(LanControl.Wire m:masters)m.close();
             LanControl.Wire again=null;for(int i=0;i<40&&again==null;i++)try{again=LanControl.dial("127.0.0.1",port,"benar-kode-123",3000);}catch(LanControl.BusyException wait){Thread.sleep(50);}
-            check(again!=null,"slot freed after session ends");again.close();check(sessions.size()==LanControl.MAX_CONTROLLERS+1,"limit + one accepted sessions");
+            check(again!=null,"slot freed after session ends");again.close();
+            // READY is sent just before the session callback runs, so give the last session a moment to register.
+            for(int i=0;i<100&&sessions.size()<LanControl.MAX_CONTROLLERS+1;i++)Thread.sleep(20);check(sessions.size()==LanControl.MAX_CONTROLLERS+1,"limit + one accepted sessions");
             server.close();loop.get(5,TimeUnit.SECONDS);
         }
     }
