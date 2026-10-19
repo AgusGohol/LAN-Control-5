@@ -14,6 +14,8 @@ class RemoteServices implements AutoCloseable {
     record Upload(Path target,Path temporary,OutputStream output) {}
     /** Set by the client session: schedules install + restart after UPDATE_APPLY has been answered. */
     volatile Runnable onUpdate,onElevate;
+    /** With several masters on one client, only one may upload an update at a time. */
+    static final java.util.concurrent.atomic.AtomicReference<RemoteServices> UPDATING=new java.util.concurrent.atomic.AtomicReference<>();
     /** "ADMIN", "BIASA" or unknown; set by the client window after checking its Windows token. */
     static volatile String privilege="TIDAK DIKETAHUI";
     static String b64(String s){return Base64.getEncoder().encodeToString(s.getBytes(StandardCharsets.UTF_8));}
@@ -73,6 +75,7 @@ class RemoteServices implements AutoCloseable {
                 String version=a.get(0);if(!Updater.newer(version))throw new IOException("Versi "+version+" tidak lebih baru dari klien v"+LanControl.VERSION+".");
                 if(onUpdate==null)throw new IOException("Klien ini tidak dapat memulai ulang otomatis.");
                 if(uploads.size()>=4)throw new IOException("Terlalu banyak transfer aktif.");
+                if(!UPDATING.compareAndSet(null,this)&&UPDATING.get()!=this)throw new IOException("Klien sedang menerima pembaruan dari komputer utama lain.");
                 Path target=Updater.staged();Files.createDirectories(target.getParent());Files.deleteIfExists(target);
                 Path temporary=Files.createTempFile(target.getParent(),".lan5-",".part");String id=UUID.randomUUID().toString();
                 uploads.put(id,new Upload(target,temporary,Files.newOutputStream(temporary)));return text(id);
@@ -95,7 +98,7 @@ class RemoteServices implements AutoCloseable {
             default:throw new IOException("Perintah tidak dikenal.");
         }
     }
-    public synchronized void close(){for(Upload u:uploads.values())try{u.output.close();Files.deleteIfExists(u.temporary);}catch(IOException ignored){}uploads.clear();}
+    public synchronized void close(){UPDATING.compareAndSet(this,null);for(Upload u:uploads.values())try{u.output.close();Files.deleteIfExists(u.temporary);}catch(IOException ignored){}uploads.clear();}
 
     static class Startup {
         static final String IDENTITY="$id=[Security.Principal.WindowsIdentity]::GetCurrent();$sid=$id.User.Value;$task='LANControl5-Client-'+$sid;";

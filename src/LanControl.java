@@ -17,7 +17,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LanControl {
-    static final String VERSION="1.8.1",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
+    static final String VERSION="1.9.0",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
     static final int PORT=45851, MAX=8*1024*1024;
     static volatile boolean justUpdated;
     static final Color BG=Ui.BG, PANEL=Ui.SURFACE, TEXT=Ui.TEXT;
@@ -35,7 +35,9 @@ public class LanControl {
     static byte[] command(String s){return s.getBytes(java.nio.charset.StandardCharsets.UTF_8);}
     static String string(byte[] b){return new String(b,java.nio.charset.StandardCharsets.UTF_8);}
     static class BadCodeException extends IOException {BadCodeException(){super("Kode koneksi utama dan klien berbeda.");}}
-    static class BusyException extends IOException {BusyException(){super("Klien sedang dikontrol komputer utama lain, atau sesi lama belum berakhir.");}}
+    static class BusyException extends IOException {BusyException(){super("Klien menolak sambungan baru: sudah dibuka "+MAX_CONTROLLERS+" komputer utama (batas), atau klien masih versi lama yang hanya menerima satu komputer utama.");}}
+    /** v1.9.0: several masters may view and control one client at the same time. */
+    static final int MAX_CONTROLLERS=4;
     static String connectionReason(Exception e){
         if(e instanceof javax.crypto.AEADBadTagException||e instanceof BadCodeException)return "Kode koneksi utama dan klien berbeda.";
         if(e instanceof BusyException)return e.getMessage();
@@ -85,52 +87,76 @@ public class LanControl {
         }catch(Exception e){try{s.close();}catch(IOException ignored){}throw e;}
     }
     interface Session {void run(Socket socket,Wire wire)throws Exception;}
-    /** Client side: one active controller; later controllers get BUSY instead of waiting silently. Wrong codes get an explicit rejection. */
+    /** Client side: up to MAX_CONTROLLERS masters at once; one more gets BUSY instead of waiting silently. Wrong codes get an explicit rejection. */
     static void serve(ServerSocket server,String password,java.util.function.BooleanSupplier active,Session session)throws IOException{
-        AtomicBoolean busy=new AtomicBoolean();
+        java.util.concurrent.atomic.AtomicInteger open=new java.util.concurrent.atomic.AtomicInteger();
         while(active.getAsBoolean()&&!server.isClosed()){
             Socket s=server.accept();
             WORK.submit(()->{boolean mine=false;
                 try(Wire w=new Wire(s,password,true)){
                     String hello;try{hello=string(w.read());}catch(AEADBadTagException wrong){w.rejectCode();return;}
                     if(!hello.equals(HELLO))return;
-                    mine=busy.compareAndSet(false,true);if(!mine){w.send(command(BUSY));return;}
-                    w.send(command(READY));session.run(s,w);
+                    if(open.incrementAndGet()>MAX_CONTROLLERS){open.decrementAndGet();w.send(command(BUSY));return;}
+                    mine=true;w.send(command(READY));session.run(s,w);
                 }catch(Exception ignored){}
-                finally{if(mine)busy.set(false);try{s.close();}catch(IOException ignored){}}
+                finally{if(mine)open.decrementAndGet();try{s.close();}catch(IOException ignored){}}
             });
         }
     }
+    /** Names of the masters other than {@code me}; a stale session of the same master (same name) is not counted. */
+    static <K> List<String> otherControllers(Map<K,String> all,K me){String mine=all.get(me);List<String> others=new ArrayList<>();
+        for(Map.Entry<K,String> e:all.entrySet())if(e.getKey()!=me&&!e.getValue().equals(mine)&&!others.contains(e.getValue()))others.add(e.getValue());Collections.sort(others);return others;}
+    /** Keys and mouse buttons held by one master. Physical keys are released only when no master holds them any more. */
+    static class Hands {final Set<Integer> keys=new HashSet<>(),buttons=new HashSet<>();}
     static class Input {
-        final FrameCache frameCache=new FrameCache();final Robot robot;Robot captureRobot;volatile Rectangle screen;final Set<Integer> keys=new HashSet<>(),buttons=new HashSet<>();
+        final FrameCache frameCache=new FrameCache();final Robot robot;Robot captureRobot;volatile Rectangle screen;final Object captureLock=new Object();
+        /** Default hands for single-master callers; every master session gets its own Hands. */
+        final Hands shared=new Hands();
+        /** How many masters hold each key / mouse button right now. */
+        final Map<Integer,Integer> keyHolders=new HashMap<>(),buttonHolders=new HashMap<>();
         Input()throws Exception{robot=new Robot();captureRobot=new Robot();robot.setAutoDelay(0);robot.setAutoWaitForIdle(false);screen=GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDefaultConfiguration().getBounds();}
-        synchronized void release(){for(int k:keys)try{robot.keyRelease(k);}catch(RuntimeException ignored){}for(int b:buttons)robot.mouseRelease(b);keys.clear();buttons.clear();}
-        synchronized void apply(String msg){
+        /** Tests only: no Robot; override press/lift to observe what would reach the physical keyboard and mouse. */
+        Input(Void test){robot=null;captureRobot=null;}
+        void press(int code,boolean key){if(key)robot.keyPress(code);else robot.mousePress(code);}
+        void lift(int code,boolean key){if(key)robot.keyRelease(code);else robot.mouseRelease(code);}
+        synchronized void release(){release(shared);}
+        /** Releases what this master holds; a key another master still holds stays pressed. */
+        synchronized void release(Hands h){for(int k:h.keys)let(keyHolders,k,true);for(int b:h.buttons)let(buttonHolders,b,false);h.keys.clear();h.buttons.clear();}
+        void let(Map<Integer,Integer> holders,int code,boolean key){Integer n=holders.get(code);if(n==null)return;if(n>1){holders.put(code,n-1);return;}holders.remove(code);
+            try{lift(code,key);}catch(RuntimeException ignored){}}
+        synchronized void apply(String msg){apply(msg,shared);}
+        synchronized void apply(String msg,Hands h){
             try{
                 String[] p=msg.split(" ");
                 switch(p[0]){
                     case "MOVE":double x=Double.parseDouble(p[1]),y=Double.parseDouble(p[2]);if(!Double.isFinite(x)||!Double.isFinite(y))return;
                         Rectangle bounds=currentBounds();robot.mouseMove(bounds.x+(int)(Math.max(0,Math.min(1,x))*(bounds.width-1)),bounds.y+(int)(Math.max(0,Math.min(1,y))*(bounds.height-1)));break;
-                    case "DOWN":int b=Integer.parseInt(p[1]);if(b==1024||b==2048||b==4096){buttons.add(b);robot.mousePress(b);}break;
-                    case "UP":b=Integer.parseInt(p[1]);if(buttons.remove(b))robot.mouseRelease(b);break;
-                    case "KEYDOWN":int k=Integer.parseInt(p[1]);if(k>0&&k<65536){robot.keyPress(k);keys.add(k);}break;
-                    case "KEYUP":k=Integer.parseInt(p[1]);if(keys.remove(k))robot.keyRelease(k);break;
+                    case "DOWN":int b=Integer.parseInt(p[1]);if(b==1024||b==2048||b==4096){if(h.buttons.add(b))buttonHolders.merge(b,1,Integer::sum);press(b,false);}break;
+                    case "UP":b=Integer.parseInt(p[1]);if(h.buttons.remove(b))let(buttonHolders,b,false);break;
+                    // Auto-repeat sends KEYDOWN again while held: always pressed, counted once per master.
+                    case "KEYDOWN":int k=Integer.parseInt(p[1]);if(k>0&&k<65536){press(k,true);if(h.keys.add(k))keyHolders.merge(k,1,Integer::sum);}break;
+                    case "KEYUP":k=Integer.parseInt(p[1]);if(h.keys.remove(k))let(keyHolders,k,true);break;
                     case "WHEEL":robot.mouseWheel(Math.max(-10,Math.min(10,Integer.parseInt(p[1]))));break;
-                    case "RESET":release();break;
+                    case "RESET":release(h);break;
                 }
             }catch(RuntimeException ignored){}
         }
-        synchronized void chord(int key){boolean held=keys.contains(KeyEvent.VK_CONTROL);if(!held)robot.keyPress(KeyEvent.VK_CONTROL);try{robot.keyPress(key);robot.keyRelease(key);}finally{if(!held)robot.keyRelease(KeyEvent.VK_CONTROL);}}
+        synchronized void chord(int key){boolean held=keyHolders.containsKey(KeyEvent.VK_CONTROL);if(!held)press(KeyEvent.VK_CONTROL,true);try{press(key,true);lift(key,true);}finally{if(!held)lift(KeyEvent.VK_CONTROL,true);}}
         Rectangle currentBounds(){return GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDefaultConfiguration().getBounds();}
-        byte[] frame(StreamQuality.State state)throws Exception{
-            Rectangle bounds=currentBounds();if(!bounds.equals(screen)){captureRobot=new Robot();screen=new Rectangle(bounds);}
-            return frameCache.encode(captureRobot.createScreenCapture(bounds),state);
+        byte[] frame(StreamQuality.State state)throws Exception{return frame(frameCache,state);}
+        /** Each master has its own FrameCache: tile updates are relative to the last frame sent to that master. */
+        byte[] frame(FrameCache cache,StreamQuality.State state)throws Exception{
+            java.awt.image.BufferedImage shot;
+            synchronized(captureLock){Rectangle bounds=currentBounds();if(!bounds.equals(screen)){captureRobot=new Robot();screen=new Rectangle(bounds);}shot=captureRobot.createScreenCapture(bounds);}
+            return cache.encode(shot,state);
         }
     }
 
     static class Agent {
         final JFrame f=window("LAN Control 5 — Klien");final JPasswordField password=new JPasswordField(24);
-        final JLabel status=new JLabel("Belum berbagi layar");JButton elevateButton;volatile boolean active=false;volatile ServerSocket listener;volatile Wire current;
+        final JLabel status=new JLabel("Belum berbagi layar");JButton elevateButton;volatile boolean active=false;volatile ServerSocket listener;
+        /** Every connected master (v1.9.0: several at once) with the name it reported, or its IP until it does. */
+        final Map<Wire,String> controllers=new ConcurrentHashMap<>();
         final boolean automatic;
         volatile Boolean admin;
         Agent(boolean automatic){this(automatic,false,false);}
@@ -162,7 +188,7 @@ public class LanControl {
         void startup(boolean enable){String code=new String(password.getPassword());WORK.submit(()->{try{if(enable)RemoteServices.Startup.enable(code);else RemoteServices.Startup.disable();later(()->{JOptionPane.showMessageDialog(f,enable?"Klien akan terbuka dan berbagi otomatis saat akun Windows ini login. Simpan folder aplikasi di lokasi ini. Untuk mengganti kode, aktifkan ulang dengan kode baru.":"Startup otomatis dinonaktifkan. Klik Hentikan berbagi untuk menghentikan sesi sekarang.");if(enable)start();});}catch(Exception e){error(f,e);}});}
         /** IPv4 addresses, skipping automatic 169.254.x.x addresses that cannot be used for control. */
         static String addresses(){List<String>a=new ArrayList<>();try{for(NetworkInterface nic:Collections.list(NetworkInterface.getNetworkInterfaces()))if(nic.isUp()&&!nic.isLoopback())for(InetAddress ip:Collections.list(nic.getInetAddresses()))if(ip instanceof Inet4Address&&!ip.isLinkLocalAddress())a.add(ip.getHostAddress());}catch(Exception ignored){}return a.isEmpty()?"(tidak ada jaringan aktif)":String.join(" / ",a);}
-        void stop(){active=false;Wire w=current;if(w!=null)w.close();try{if(listener!=null)listener.close();}catch(Exception ignored){}status.setText("Berbagi dihentikan");password.setEnabled(true);}
+        void stop(){active=false;for(Wire w:controllers.keySet())w.close();try{if(listener!=null)listener.close();}catch(Exception ignored){}status.setText("Berbagi dihentikan");password.setEnabled(true);}
         void start(){if(active)return;String pass=new String(password.getPassword());if(pass.length()<12){error(f,new Exception("Gunakan kode minimal 12 karakter."));return;}
             try{listener=new ServerSocket(PORT);}catch(BindException e){error(f,new Exception("Port "+PORT+" sudah dipakai. Kemungkinan klien LAN Control lain sudah berjalan di komputer ini (misalnya dari startup otomatis). Tutup klien lain tersebut atau gunakan jendela yang sudah terbuka."));return;}catch(Exception e){error(f,e);return;}
             active=true;password.setEnabled(false);status.setText("Menunggu kontrol utama...");ServerSocket server=listener;
@@ -186,20 +212,29 @@ public class LanControl {
             WORK.submit(()->{try{List<String> args=new ArrayList<>(List.of("client"));if(automatic)args.add("--auto");else {Updater.stash(code,Map.of());args.add("--resume");}
                     Updater.restart(args);later(()->{stop();System.exit(0);});}
                 catch(Exception e){error(f,new Exception("Pembaruan otomatis gagal: "+message(e)));}});}
+        void showControllers(){List<String> names=new ArrayList<>(controllers.values());later(()->{if(!active)return;
+            if(names.isEmpty())status.setText("Menunggu kontrol utama...");
+            else if(names.size()==1)status.setText("Akses layar & file oleh "+names.get(0));
+            else status.setText("Dikontrol bersama oleh "+names.size()+" komputer utama: "+String.join(", ",names));});}
+        /** CONTROLLERS rpc: a master reports its name and gets the names of the other masters on this client (one per line). */
+        String controllersFor(Wire w,String host,String name){String me=Card.cleanName(name);if(!me.isEmpty())controllers.put(w,me+" ("+host+")");showControllers();
+            return String.join("\n",otherControllers(controllers,w));}
         void session(Socket s,Wire w,Input input)throws Exception{
-            current=w;s.setSoTimeout(10000);String host=s.getInetAddress().getHostAddress();later(()->status.setText("Akses layar & file oleh "+host));
+            s.setSoTimeout(10000);String host=s.getInetAddress().getHostAddress();controllers.put(w,host);showControllers();Hands hands=new Hands();
             // File RPCs run on their own ordered worker so transfers and folder listings never delay mouse/keyboard input.
             ExecutorService files=Executors.newSingleThreadExecutor(LanControl::daemon),clipboard=Executors.newSingleThreadExecutor(LanControl::daemon);
             try(RemoteServices services=new RemoteServices()){
                 services.onUpdate=()->WORK.submit(()->{try{Thread.sleep(600);}catch(InterruptedException ignored){}later(this::restartForUpdate);});
                 services.onElevate=()->WORK.submit(()->{try{Thread.sleep(600);}catch(InterruptedException ignored){}later(this::elevateSelf);});
-                StreamQuality.State stream=new StreamQuality.State();input.frameCache.clear();
-                Future<?> video=WORK.submit(()->{try{streamVideo(w,stream,()->input.frame(stream),()->active&&!s.isClosed());}catch(Exception e){w.close();}});
+                StreamQuality.State stream=new StreamQuality.State();FrameCache cache=new FrameCache();
+                Future<?> video=WORK.submit(()->{try{streamVideo(w,stream,()->input.frame(cache,stream),()->active&&!s.isClosed());}catch(Exception e){w.close();}});
                 try{while(active&&!s.isClosed()){String msg=string(w.read());
-                    if(msg.startsWith("RPC ")){if(clipboardRpc(msg))handleRpc(w,services,msg,input,clipboard);else files.execute(()->{try{handleRpc(w,services,msg,null,null);}catch(Exception e){w.close();}});}
-                    else if(msg.startsWith("VIDEO "))stream.configure(msg.split(" "));else if(msg.equals("VIDEO_KEY"))stream.forceKey=true;else if(msg.equals("VIDEO_ACK"))stream.ack();else {if(ControlQueue.input(msg))stream.interact();input.apply(msg);if(!msg.startsWith("MOVE "))stream.nudge();}}}
+                    if(msg.startsWith("RPC ")){String[] r=msg.split(" ",-1);
+                        if(r.length>=3&&r[2].equals("CONTROLLERS")){try{reply(w,r[1],command(controllersFor(w,host,r.length>3&&!r[3].equals("-")?RemoteServices.un64(r[3]):"")));}catch(Exception e){fail(w,r[1],e);}}
+                        else if(clipboardRpc(msg))handleRpc(w,services,msg,input,clipboard);else files.execute(()->{try{handleRpc(w,services,msg,null,null);}catch(Exception e){w.close();}});}
+                    else if(msg.startsWith("VIDEO "))stream.configure(msg.split(" "));else if(msg.equals("VIDEO_KEY"))stream.forceKey=true;else if(msg.equals("VIDEO_ACK"))stream.ack();else {if(ControlQueue.input(msg))stream.interact();input.apply(msg,hands);if(!msg.startsWith("MOVE "))stream.nudge();}}}
                 finally{video.cancel(true);files.shutdownNow();clipboard.shutdownNow();}
-            }finally{current=null;input.release();if(active)later(()->status.setText("Menunggu kontrol utama..."));}
+            }finally{controllers.remove(w);input.release(hands);showControllers();}
         }
     }
     /** Client video loop: capture + encode + send, paced by the stream state (also used by the latency tests). */
@@ -353,7 +388,9 @@ List<java.awt.Rectangle> changed=null;
     static class Card extends Ui.RoundPanel {
         int number;JLabel numberLabel;final Controller owner;volatile Peer peer;volatile BufferedImage image;final JTextField ip=new JTextField(14);final JCheckBox selected=new JCheckBox("Pilih");
         final JLabel title,status=Ui.label("Offline",12,true,Ui.MUTED),picture=Ui.label(" ",11,false,Ui.MUTED);final View view;
-        boolean connecting,wanted;volatile boolean expectRestart;volatile String privilege;String host="";int attempts;javax.swing.Timer retry;String name,note;long noticeUntil;
+        boolean connecting,wanted;volatile boolean expectRestart;volatile String privilege;
+        /** Other masters connected to this client right now (v1.9.0 clients), "" when none. */
+        volatile String others="";String host="";int attempts;javax.swing.Timer retry;String name,note;long noticeUntil;
         final List<View> largeViews=new CopyOnWriteArrayList<>();String mode="AUTO";
         Card(int n,Controller owner){super(new BorderLayout(0,12));number=n;this.owner=owner;name="Komputer "+n;
             JPanel head=Ui.transparent(new BorderLayout());JPanel identity=Ui.transparent(new FlowLayout(FlowLayout.LEFT,9,0));numberLabel=Ui.label(String.format("%02d",n),13,true,Ui.ACCENT);identity.add(numberLabel);
@@ -370,8 +407,11 @@ List<java.awt.Rectangle> changed=null;
             selected.addActionListener(e->{Peer p=peer;if(p!=null)p.send("RESET");});
         }
         boolean limited(){return peer!=null&&"BIASA".equals(privilege);}
-        void showOnline(){if(peer==null)return;boolean warn=limited();status.setText("Online • "+host+(warn?"  •  ⚠ Izin BIASA":""));status.setForeground(warn?Ui.WARN:Ui.ACCENT);
-            status.setCursor(Cursor.getPredefinedCursor(warn?Cursor.HAND_CURSOR:Cursor.DEFAULT_CURSOR));status.setToolTipText(warn?"Klien berjalan tanpa izin Administrator: klik ke Task Manager, installer, dan aplikasi admin tidak berfungsi. Klik untuk memperbaiki.":null);}
+        void showOnline(){if(peer==null)return;boolean warn=limited(),shared=!others.isEmpty();int count=shared?others.split("\n").length:0;
+            status.setText("Online • "+host+(warn?"  •  ⚠ Izin BIASA":"")+(shared?"  •  Juga dikontrol "+count+" komputer utama lain":""));status.setForeground(warn||shared?Ui.WARN:Ui.ACCENT);
+            status.setCursor(Cursor.getPredefinedCursor(warn?Cursor.HAND_CURSOR:Cursor.DEFAULT_CURSOR));
+            String tip=warn?"Klien berjalan tanpa izin Administrator: klik ke Task Manager, installer, dan aplikasi admin tidak berfungsi. Klik untuk memperbaiki.":null;
+            if(shared)tip=(tip==null?"":tip+" ")+"Juga dikontrol oleh: "+others.replace("\n",", ")+". Kursor dan ketikan dipakai bersama: bergantianlah.";status.setToolTipText(tip);}
         /** Explains the UIPI limitation and lets the master ask the client to restart elevated. */
         void privilegeHelp(){
             Peer p=peer;if(p==null||!limited())return;
@@ -415,7 +455,7 @@ List<java.awt.Rectangle> changed=null;
             if(host.isEmpty()||pass.length()<12){wanted=false;if(!silent)error(owner.f,new Exception("Isi IP klien dan kode minimal 12 karakter."));else {status.setText("Isi IP dan kode");status.setForeground(Ui.WARN);}return;}
             connecting=true;status.setText("Menghubungkan...");status.setForeground(Ui.ACCENT);int port=owner.port;
             WORK.submit(()->{try{Wire w=dial(host,port,pass,5000);Peer p=new Peer(w,this);
-                    later(()->{connecting=false;if(!wanted){p.close();status.setText("Offline");status.setForeground(Ui.MUTED);return;}peer=p;attempts=0;note=null;expectRestart=false;privilege=null;this.host=host;showOnline();p.start();updateStream();owner.save();owner.checkVersion(this,p,host);owner.checkPrivilege(this,p);owner.checkName(this,p);});}
+                    later(()->{connecting=false;if(!wanted){p.close();status.setText("Offline");status.setForeground(Ui.MUTED);return;}peer=p;attempts=0;note=null;expectRestart=false;privilege=null;this.host=host;showOnline();p.start();updateStream();owner.save();owner.checkVersion(this,p,host);owner.checkPrivilege(this,p);owner.checkName(this,p);owner.checkControllers(this,p);});}
                 catch(Exception e){String reason=connectionReason(e);boolean fatal=e instanceof BadCodeException;
                     later(()->{connecting=false;if(!wanted)return;
                         if(retryOnFail&&!fatal&&(owner.reconnect.isSelected()||expectRestart)){scheduleRetry(reason);return;}
@@ -478,6 +518,14 @@ List<java.awt.Rectangle> changed=null;
             if(!c.ip.getText().isEmpty()&&password.getPassword().length>=12)c.connect();else c.ip.requestFocusInWindow();
         }
         /** A computer still called "Komputer N" takes the client's Windows computer name when it connects. */
+        /** Every 3 s: tell the client this master's name and learn which other masters control it too (v1.9.0 clients). */
+        void checkControllers(Card card,Peer p){String me=RemoteServices.hostName();
+            WORK.submit(()->{card.others="";
+                while(card.peer==p&&p.alive){String found;
+                    try{found=string(p.rpc("CONTROLLERS",me)).trim();}catch(Exception e){if(message(e).contains("tidak dikenal")||!p.alive)return;found=card.others;}
+                    String now=found;later(()->{if(card.peer!=p||now.equals(card.others))return;boolean joined=!now.isEmpty()&&(card.others.isEmpty()||now.split("\n").length>card.others.split("\n").length);card.others=now;card.showOnline();
+                        if(joined)card.notice("Komputer utama lain juga mengontrol klien ini: "+now.replace("\n",", ")+". Kursor dipakai bersama, bergantianlah.");});
+                    try{Thread.sleep(3000);}catch(InterruptedException e){return;}}});}
         void checkName(Card card,Peer p){
             if(!card.defaultName())return;
             WORK.submit(()->{String host;try{host=Card.cleanName(string(p.rpc("HOSTNAME")));}catch(Exception e){return;}
@@ -656,6 +704,7 @@ List<java.awt.Rectangle> changed=null;
             TransferTests.run();
             PrivilegeTests.run();
             StreamTests.run();
+            MultiMasterTests.run();
         }
     }
 }

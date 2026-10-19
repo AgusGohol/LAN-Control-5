@@ -47,12 +47,12 @@ class UpdateTests {
             CountDownLatch release=new CountDownLatch(1);List<String> sessions=new CopyOnWriteArrayList<>();
             Future<?> loop=LanControl.WORK.submit(()->{try{LanControl.serve(server,"benar-kode-123",()->true,(s,w)->{sessions.add("open");release.await(20,TimeUnit.SECONDS);});}catch(IOException ignored){}});
             int port=server.getLocalPort();
-            LanControl.Wire first=LanControl.dial("127.0.0.1",port,"benar-kode-123",3000);
-            try{LanControl.dial("127.0.0.1",port,"benar-kode-123",3000);throw new AssertionError("second controller must be refused");}catch(LanControl.BusyException expected){check(LanControl.connectionReason(expected).contains("komputer utama lain"),"busy reason readable");}
+            List<LanControl.Wire> masters=new ArrayList<>();for(int i=0;i<LanControl.MAX_CONTROLLERS;i++)masters.add(LanControl.dial("127.0.0.1",port,"benar-kode-123",3000));
+            try{LanControl.dial("127.0.0.1",port,"benar-kode-123",3000);throw new AssertionError("controller above the limit must be refused");}catch(LanControl.BusyException expected){check(LanControl.connectionReason(expected).contains("batas"),"busy reason readable");}
             try{LanControl.dial("127.0.0.1",port,"salah-kode-1234",3000);throw new AssertionError("wrong code must fail");}catch(LanControl.BadCodeException expected){check(LanControl.connectionReason(expected).contains("berbeda"),"wrong code reason");}
-            release.countDown();first.close();
+            release.countDown();for(LanControl.Wire m:masters)m.close();
             LanControl.Wire again=null;for(int i=0;i<40&&again==null;i++)try{again=LanControl.dial("127.0.0.1",port,"benar-kode-123",3000);}catch(LanControl.BusyException wait){Thread.sleep(50);}
-            check(again!=null,"slot freed after session ends");again.close();check(sessions.size()==2,"exactly two accepted sessions");
+            check(again!=null,"slot freed after session ends");again.close();check(sessions.size()==LanControl.MAX_CONTROLLERS+1,"limit + one accepted sessions");
             server.close();loop.get(5,TimeUnit.SECONDS);
         }
     }
