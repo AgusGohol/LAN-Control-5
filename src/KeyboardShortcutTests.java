@@ -24,7 +24,7 @@ class KeyboardShortcutTests {
             sent.clear();down(KeyEvent.VK_D,CA);up(KeyEvent.VK_D,CA);check(sent.equals(keys(WIN,KeyEvent.VK_D,-KeyEvent.VK_D,-WIN)),"second shortcut while still holding Ctrl+Alt: "+sent);
             sent.clear();down(KeyEvent.VK_Z,CA);check(sent.equals(keys(CTRL,ALT,KeyEvent.VK_Z)),"ordinary key afterwards gets Ctrl+Alt back on the client: "+sent);
             sent.clear();up(KeyEvent.VK_Z,CA);up(ALT,InputEvent.CTRL_DOWN_MASK);up(CTRL,0);check(sent.equals(keys(-KeyEvent.VK_Z,-ALT,-CTRL)),"modifiers released normally after being pressed again");
-            int[][] expected={{WIN},{WIN,KeyEvent.VK_D},{WIN,KeyEvent.VK_E},{WIN,KeyEvent.VK_R},{WIN,SHIFT,KeyEvent.VK_S},null,{ALT,KeyEvent.VK_F4},{CTRL,SHIFT,KeyEvent.VK_ESCAPE},{KeyEvent.VK_PRINTSCREEN}};
+            int[][] expected={{WIN},{WIN,KeyEvent.VK_D},{WIN,KeyEvent.VK_E},{WIN,KeyEvent.VK_R},{WIN,KeyEvent.VK_X},{WIN,SHIFT,KeyEvent.VK_S},null,{ALT,KeyEvent.VK_F4},{CTRL,SHIFT,KeyEvent.VK_ESCAPE},{KeyEvent.VK_PRINTSCREEN}};
             for(int i=0;i<expected.length;i++){if(expected[i]==null)continue;int key=LanControl.COMBO_HOTKEYS[i];
                 down(CTRL,InputEvent.CTRL_DOWN_MASK);down(ALT,CA);sent.clear();down(key,CA);up(key,CA);up(ALT,InputEvent.CTRL_DOWN_MASK);up(CTRL,0);
                 List<String> want=new ArrayList<>(keys(-ALT,-CTRL));for(int k:expected[i])want.add("KEYDOWN "+k);for(int j=expected[i].length-1;j>=0;j--)want.add("KEYUP "+expected[i][j]);
@@ -47,6 +47,6 @@ class KeyboardShortcutTests {
             LanControl.View big=new LanControl.View(()->frame,x->{}){public boolean hasFocus(){return true;}};big.enlarged=true;big.setSize(640,360);big.displayWidth=640;big.displayHeight=360;big.prepare(frame);
             BufferedImage canvas=new BufferedImage(640,360,BufferedImage.TYPE_INT_RGB);big.paint(canvas.getGraphics());check(true,"focus badge paints without error");
         });
-        System.out.println("PASS: v1.10.0 keyboard shortcuts: Ctrl+Alt+W/D/E/R/S/F4/Esc/P and numpad +, Alt+Page Up/Down task switching, Ctrl+Alt+K release, no double presses, modifiers restored, Escape unchanged.");
+        System.out.println("PASS: v1.10.0 keyboard shortcuts: Ctrl+Alt+W/D/E/R/X/S/F4/Esc/P and numpad +, Alt+Page Up/Down task switching, Ctrl+Alt+K release, no double presses, modifiers restored, Escape unchanged.");
     }
 }

@@ -17,7 +17,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LanControl {
-    static final String VERSION="1.10.0",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
+    static final String VERSION="1.10.1",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
     static final int PORT=45851, MAX=8*1024*1024;
     static volatile boolean justUpdated;
     static final Color BG=Ui.BG, PANEL=Ui.SURFACE, TEXT=Ui.TEXT;
@@ -314,11 +314,11 @@ List<java.awt.Rectangle> changed=null;
     }
     interface Sender {void send(String s);}
     /** Special key combinations the master's own Windows would otherwise intercept. */
-    static final String[] COMBO_NAMES={"Tombol Windows  (menu Start)","Win + D  (tampilkan desktop)","Win + E  (File Explorer)","Win + R  (Run)","Win + Shift + S  (potong layar)","Alt + Tab  (ganti jendela)","Alt + F4  (tutup jendela aktif di klien)","Ctrl + Shift + Esc  (Task Manager)","Print Screen"};
-    static final int[][] COMBOS={{KeyEvent.VK_WINDOWS},{KeyEvent.VK_WINDOWS,KeyEvent.VK_D},{KeyEvent.VK_WINDOWS,KeyEvent.VK_E},{KeyEvent.VK_WINDOWS,KeyEvent.VK_R},{KeyEvent.VK_WINDOWS,KeyEvent.VK_SHIFT,KeyEvent.VK_S},{KeyEvent.VK_ALT,KeyEvent.VK_TAB},{KeyEvent.VK_ALT,KeyEvent.VK_F4},{KeyEvent.VK_CONTROL,KeyEvent.VK_SHIFT,KeyEvent.VK_ESCAPE},{KeyEvent.VK_PRINTSCREEN}};
+    static final String[] COMBO_NAMES={"Tombol Windows  (menu Start)","Win + D  (tampilkan desktop)","Win + E  (File Explorer)","Win + R  (Run)","Win + X  (menu power user)","Win + Shift + S  (potong layar)","Alt + Tab  (ganti jendela)","Alt + F4  (tutup jendela aktif di klien)","Ctrl + Shift + Esc  (Task Manager)","Print Screen"};
+    static final int[][] COMBOS={{KeyEvent.VK_WINDOWS},{KeyEvent.VK_WINDOWS,KeyEvent.VK_D},{KeyEvent.VK_WINDOWS,KeyEvent.VK_E},{KeyEvent.VK_WINDOWS,KeyEvent.VK_R},{KeyEvent.VK_WINDOWS,KeyEvent.VK_X},{KeyEvent.VK_WINDOWS,KeyEvent.VK_SHIFT,KeyEvent.VK_S},{KeyEvent.VK_ALT,KeyEvent.VK_TAB},{KeyEvent.VK_ALT,KeyEvent.VK_F4},{KeyEvent.VK_CONTROL,KeyEvent.VK_SHIFT,KeyEvent.VK_ESCAPE},{KeyEvent.VK_PRINTSCREEN}};
     /** v1.10.0: keyboard equivalents, pressed while the client screen has focus. The real combinations are caught by the master's own Windows. */
-    static final String[] COMBO_KEYS={"Ctrl+Alt+W","Ctrl+Alt+D","Ctrl+Alt+E","Ctrl+Alt+R","Ctrl+Alt+S","Alt+Page Up","Ctrl+Alt+F4","Ctrl+Alt+Esc","Ctrl+Alt+P"};
-    static final int[] COMBO_HOTKEYS={KeyEvent.VK_W,KeyEvent.VK_D,KeyEvent.VK_E,KeyEvent.VK_R,KeyEvent.VK_S,0,KeyEvent.VK_F4,KeyEvent.VK_ESCAPE,KeyEvent.VK_P};
+    static final String[] COMBO_KEYS={"Ctrl+Alt+W","Ctrl+Alt+D","Ctrl+Alt+E","Ctrl+Alt+R","Ctrl+Alt+X","Ctrl+Alt+S","Alt+Page Up","Ctrl+Alt+F4","Ctrl+Alt+Esc","Ctrl+Alt+P"};
+    static final int[] COMBO_HOTKEYS={KeyEvent.VK_W,KeyEvent.VK_D,KeyEvent.VK_E,KeyEvent.VK_R,KeyEvent.VK_X,KeyEvent.VK_S,0,KeyEvent.VK_F4,KeyEvent.VK_ESCAPE,KeyEvent.VK_P};
     /** Ctrl+Alt+key → the client combination, or null. Numpad + is Print Screen as in Windows Remote Desktop. */
     static int[] hotkey(int key){if(key==KeyEvent.VK_ADD)return new int[]{KeyEvent.VK_PRINTSCREEN};for(int i=0;i<COMBO_HOTKEYS.length;i++)if(COMBO_HOTKEYS[i]!=0&&COMBO_HOTKEYS[i]==key)return COMBOS[i];return null;}
     static final String RESET_KEY="Ctrl+Alt+K";
@@ -417,7 +417,7 @@ List<java.awt.Rectangle> changed=null;
         }
     }
     /** Keyboard equivalents for the keys Windows on the master would otherwise steal, for the legend under the Perbesar window. */
-    static final String[] KEY_LEGEND={"Ctrl+Alt+E → Win+E","Ctrl+Alt+W → Start","Alt+PgUp → Alt+Tab","Ctrl+Alt+F4 → Alt+F4","Ctrl+Alt+Esc → Task Manager","Ctrl+Alt+P → Print Screen","Ctrl+Alt+K → lepas tombol"};
+    static final String[] KEY_LEGEND={"Ctrl+Alt+E → Win+E","Ctrl+Alt+R → Win+R","Ctrl+Alt+X → Win+X","Ctrl+Alt+W → Start","Alt+PgUp → Alt+Tab","Ctrl+Alt+F4 → Alt+F4","Ctrl+Alt+Esc → Task Manager","Ctrl+Alt+P → Print Screen","Ctrl+Alt+K → lepas tombol"};
     static class Card extends Ui.RoundPanel {
         int number;JLabel numberLabel;final Controller owner;volatile Peer peer;volatile BufferedImage image;final JTextField ip=new JTextField(14);final JCheckBox selected=new JCheckBox("Pilih");
         final JLabel title,status=Ui.label("Offline",12,true,Ui.MUTED),picture=Ui.label(" ",11,false,Ui.MUTED);final View view;
