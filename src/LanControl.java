@@ -17,7 +17,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LanControl {
-    static final String VERSION="1.12.9",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
+    static final String VERSION="1.12.10",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
     static final int PORT=45851, MAX=8*1024*1024;
     static volatile boolean justUpdated;
     static final Color BG=Ui.BG, PANEL=Ui.SURFACE, TEXT=Ui.TEXT;
@@ -180,14 +180,22 @@ public class LanControl {
             body.add(actions);
             JPanel bottom=Ui.transparent(new GridLayout(0,1,0,9));status.setForeground(Ui.ACCENT);bottom.add(status);bottom.add(Ui.label("Resolusi mengikuti jendela kontrol. Kualitas dapat dipilih di komputer utama.",12,false,Ui.MUTED));body.add(bottom,BorderLayout.SOUTH);
             root.add(body);JPanel foot=Ui.transparent(new BorderLayout(10,0));foot.add(Ui.label("Biarkan klien terbuka  /  Port TCP "+PORT+"  /  Tombol hentikan selalu tersedia",12,false,Ui.MUTED));JPanel themeRow=Ui.transparent(new FlowLayout(FlowLayout.RIGHT,0,0));themeRow.add(Ui.themeToggle());foot.add(themeRow,BorderLayout.EAST);root.add(foot,BorderLayout.SOUTH);
-            Icons.apply(f,Icons.KLIEN);f.add(root);f.setSize(900,720);f.setLocationRelativeTo(null);f.setVisible(true);
+            Icons.apply(f,Icons.KLIEN);f.add(root);f.setSize(900,720);f.setLocationRelativeTo(null);f.setVisible(!automatic);
             WORK.submit(()->Icons.ensure(Icons.KLIEN,()->{try{return RemoteServices.Startup.isAdmin()?"--request-admin":"client";}catch(Exception e){return "client";}}));
             if(resume&&!automatic)WORK.submit(()->{try{Properties saved=Updater.takeResume();String code=saved==null?null:Updater.code(saved);
                     if(code!=null){later(()->{password.setText(code);start();status.setText((justUpdated?"Diperbarui ke v"+VERSION:"Berjalan kembali")+"  /  Menunggu kontrol utama...");});
                         // After elevation from a normal client with login startup: move startup to the elevated Task Scheduler entry (no UAC at next login).
                         if(upgradeStartup){try{RemoteServices.Startup.enableAdmin(code);later(()->status.setText("Startup otomatis kini dengan izin Administrator  /  Menunggu kontrol utama..."));}catch(Exception e){error(f,new Exception("Startup administrator belum aktif: "+message(e)));}}}}
                 catch(Exception e){error(f,new Exception("Isi kode lagi lalu klik Mulai berbagi: "+message(e)));}});
-            if(automatic)WORK.submit(()->{try{String code=RemoteServices.Startup.load();later(()->{password.setText(code);start();});}catch(Exception e){error(f,new Exception("Startup otomatis gagal: "+message(e)));}});
+            if(automatic)WORK.submit(()->{try{
+                    // Single instance: when Administrator mode is set up, the elevated task's instance must be the only one.
+                    boolean elevated=RemoteServices.Startup.isAdmin();boolean adminTask=false;try{adminTask=RemoteServices.Startup.taskActive();}catch(Exception ignored){}
+                    if(adminTask){
+                        if(elevated)RemoteServices.Startup.removeLoginLaunchers();   // clean any leftover non-admin launcher so it can't double-open
+                        else try{Thread.sleep(1600);}catch(InterruptedException ignored){}   // let the elevated instance grab the port first, then stand down
+                    }
+                    String code=RemoteServices.Startup.load();later(()->{password.setText(code);start();});
+                }catch(Exception e){later(()->error(f,new Exception("Startup otomatis gagal: "+message(e))));}});
             refreshStartupState();
         }
         /** Checkbox "Ingat kode": save/forget the code only (no auto-start). Forced on while auto-start is active. */
@@ -210,10 +218,22 @@ public class LanControl {
         static String addresses(){List<String>a=new ArrayList<>();try{for(NetworkInterface nic:Collections.list(NetworkInterface.getNetworkInterfaces()))if(nic.isUp()&&!nic.isLoopback())for(InetAddress ip:Collections.list(nic.getInetAddresses()))if(ip instanceof Inet4Address&&!ip.isLinkLocalAddress())a.add(ip.getHostAddress());}catch(Exception ignored){}return a.isEmpty()?"(tidak ada jaringan aktif)":String.join(" / ",a);}
         void stop(){active=false;for(Wire w:controllers.keySet())w.close();try{if(listener!=null)listener.close();}catch(Exception ignored){}status.setText("Berbagi dihentikan");password.setEnabled(true);}
         void start(){if(active)return;String pass=new String(password.getPassword());if(pass.length()<12){error(f,new Exception("Gunakan kode minimal 12 karakter."));return;}
-            try{listener=new ServerSocket(PORT);}catch(BindException e){error(f,new Exception("Port "+PORT+" sudah dipakai. Kemungkinan klien LAN Control lain sudah berjalan di komputer ini (misalnya dari startup otomatis). Tutup klien lain tersebut atau gunakan jendela yang sudah terbuka."));return;}catch(Exception e){error(f,e);return;}
-            active=true;password.setEnabled(false);status.setText("Menunggu kontrol utama...");ServerSocket server=listener;
-            WORK.submit(()->{try{Input input=new Input();serve(server,pass,()->active,(s,w)->session(s,w,input));}
-                catch(Exception e){if(active)error(f,e);}finally{try{server.close();}catch(Exception ignored){}later(()->{if(listener==server)stop();});}});
+            active=true;password.setEnabled(false);status.setText("Menyiapkan berbagi...");
+            WORK.submit(()->{
+                // Auto-start retries briefly so the elevated instance can win the port if a stale instance is still releasing it;
+                // if it still can't bind, another client already runs here, so it stands down quietly (no error dialog).
+                ServerSocket bound=null;int tries=automatic?6:1;
+                for(int i=0;i<tries;i++){try{bound=new ServerSocket(PORT);break;}
+                    catch(BindException e){if(i+1<tries)try{Thread.sleep(600);}catch(InterruptedException ignored){}}
+                    catch(Exception e){active=false;later(()->{password.setEnabled(true);status.setText("Berbagi dihentikan");error(f,e);});return;}}
+                if(bound==null){
+                    if(automatic){later(()->System.exit(0));return;}
+                    active=false;later(()->{password.setEnabled(true);status.setText("Berbagi dihentikan");error(f,new Exception("Port "+PORT+" sudah dipakai. Kemungkinan klien LAN Control lain sudah berjalan di komputer ini (misalnya dari startup otomatis). Tutup klien lain tersebut atau gunakan jendela yang sudah terbuka."));});return;}
+                listener=bound;final ServerSocket server=bound;
+                later(()->{if(!f.isVisible())f.setVisible(true);status.setText("Menunggu kontrol utama...");});
+                try{Input input=new Input();serve(server,pass,()->active,(s,w)->session(s,w,input));}
+                catch(Exception e){if(active)later(()->error(f,e));}
+                finally{try{server.close();}catch(Exception ignored){}later(()->{if(listener==server)stop();});}});
         }
         /**
          * Restart this client elevated (UAC must be confirmed on this computer). Sharing resumes with the same code,
@@ -732,6 +752,15 @@ List<java.awt.Rectangle> changed=null;
             catch(Exception e){JOptionPane.showMessageDialog(null,"Pintasan gagal dibuat: "+message(e),"LAN Control 5",JOptionPane.ERROR_MESSAGE);System.exit(1);}
             System.exit(0);}
         if(args.length>0&&args[0].equals("--request-admin")){try{RemoteServices.Startup.elevate();}catch(Exception e){JOptionPane.showMessageDialog(null,"Tidak berhasil membuka klien administrator. UAC mungkin dibatalkan.\n"+e.getMessage());System.exit(1);}return;}
+        // One-click Administrator setup (Pasang-Akses-Admin.bat): registers the elevated login task from the already-saved
+        // code, WITHOUT opening a client window or binding the port - so it works even while the client is already running.
+        if(args.length>0&&args[0].equals("--pasang-admin")){
+            try{if(!RemoteServices.Startup.isAdmin()){RemoteServices.Startup.elevate("--pasang-admin");return;}   // ask UAC once, elevated run continues below
+                if(!RemoteServices.Startup.hasCode())throw new Exception("Buka klien dulu, isi kode koneksi, dan centang \"Ingat kode\" agar kode tersimpan.");
+                String code=RemoteServices.Startup.load();RemoteServices.Startup.enableAdmin(code);
+                JOptionPane.showMessageDialog(null,"Mode Administrator aktif.\nSetelah PC dinyalakan ulang, klien terbuka SEBAGAI ADMINISTRATOR sendiri\ndan komputer utama mendapat kontrol penuh.\n\nSilakan nyalakan ulang PC klien ini.","LAN Control 5",JOptionPane.INFORMATION_MESSAGE);}
+            catch(Exception e){JOptionPane.showMessageDialog(null,"Gagal memasang mode Administrator:\n"+message(e),"LAN Control 5",JOptionPane.ERROR_MESSAGE);System.exit(1);}
+            System.exit(0);}
         theme();later(()->{if(args.length>0&&args[0].equals("client"))new Agent(list.contains("--auto"),list.contains("--resume"),list.contains("--upgrade-startup"));else new Controller();});
     }
     static class Tests {

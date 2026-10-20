@@ -239,6 +239,9 @@ class RemoteServices implements AutoCloseable {
         static String startupIcon(){try{Icons.install();return "$s.IconLocation="+literal(Icons.icon(Icons.KLIEN)+",0")+";";}catch(Exception e){return "";}}
         static String load()throws Exception{windows();Properties p=new Properties();try(InputStream in=Files.newInputStream(config())){p.load(in);}
             String stored=p.getProperty("code","");if(stored.startsWith(CODE_MARK))return decryptCode(stored);return un64(protect(stored,false));}
+        /** Remove ONLY the non-elevated login launchers (Startup shortcut and .cmd), keeping the elevated task.
+         *  The elevated client calls this at startup so a leftover non-admin launcher can't open a second instance. */
+        static void removeLoginLaunchers(){try{Files.deleteIfExists(shortcut());}catch(Exception ignored){}try{Files.deleteIfExists(startupCmd());}catch(Exception ignored){}}
         /** Turn off auto-start (login shortcut and elevated task) but keep the saved code. */
         static void disableStartup()throws Exception{windows();try{removeTask();}catch(Exception ignored){}Files.deleteIfExists(shortcut());Files.deleteIfExists(startupCmd());}
         static void disable()throws Exception{windows();removeTask();Files.deleteIfExists(shortcut());Files.deleteIfExists(startupCmd());Files.deleteIfExists(config());}
