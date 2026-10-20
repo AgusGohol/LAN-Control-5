@@ -17,7 +17,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LanControl {
-    static final String VERSION="1.10.1",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
+    static final String VERSION="1.11.0",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
     static final int PORT=45851, MAX=8*1024*1024;
     static volatile boolean justUpdated;
     static final Color BG=Ui.BG, PANEL=Ui.SURFACE, TEXT=Ui.TEXT;
@@ -29,7 +29,7 @@ public class LanControl {
         return t.getMessage()==null||t.getMessage().isBlank()?t.getClass().getSimpleName():t.getMessage();
     }
     static void error(Component c,Exception e){later(()->JOptionPane.showMessageDialog(c,message(e),"Koneksi / aplikasi",JOptionPane.ERROR_MESSAGE));}
-    static void theme(){Ui.install();}
+    static void theme(){Ui.palette(Ui.savedDark());Ui.install();}
     static JButton button(String s,Runnable r){return Ui.button(s,r);}
     static JFrame window(String title){JFrame f=new JFrame(title);f.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);f.setMinimumSize(new Dimension(700,450));return f;}
     static byte[] command(String s){return s.getBytes(java.nio.charset.StandardCharsets.UTF_8);}
@@ -174,7 +174,7 @@ public class LanControl {
             JPanel actions=Ui.transparent(new GridLayout(0,1,0,9));actions.add(Ui.primary("Mulai berbagi layar & izinkan kontrol",this::start));actions.add(button("Hentikan berbagi / putuskan kontrol",this::stop));elevateButton=Ui.primary("Mulai ulang sebagai Administrator (disarankan)",this::elevateSelf);elevateButton.setVisible(false);actions.add(elevateButton);
             actions.add(button("Aktifkan otomatis saat Windows login",()->startup(true)));actions.add(button("Aktifkan otomatis dengan izin administrator",this::startupAdmin));actions.add(button("Nonaktifkan otomatis saat login",()->startup(false)));body.add(actions);
             JPanel bottom=Ui.transparent(new GridLayout(0,1,0,9));status.setForeground(Ui.ACCENT);bottom.add(status);bottom.add(Ui.label("Resolusi mengikuti jendela kontrol. Kualitas dapat dipilih di komputer utama.",12,false,Ui.MUTED));body.add(bottom,BorderLayout.SOUTH);
-            root.add(body);root.add(Ui.label("Biarkan klien terbuka  /  Port TCP "+PORT+"  /  Tombol hentikan selalu tersedia",12,false,Ui.MUTED),BorderLayout.SOUTH);
+            root.add(body);JPanel foot=Ui.transparent(new BorderLayout(10,0));foot.add(Ui.label("Biarkan klien terbuka  /  Port TCP "+PORT+"  /  Tombol hentikan selalu tersedia",12,false,Ui.MUTED));JPanel themeRow=Ui.transparent(new FlowLayout(FlowLayout.RIGHT,0,0));themeRow.add(Ui.themeToggle());foot.add(themeRow,BorderLayout.EAST);root.add(foot,BorderLayout.SOUTH);
             Icons.apply(f,Icons.KLIEN);f.add(root);f.setSize(900,690);f.setLocationRelativeTo(null);f.setVisible(true);
             WORK.submit(()->Icons.ensure(Icons.KLIEN,()->{try{return RemoteServices.Startup.isAdmin()?"--request-admin":"client";}catch(Exception e){return "client";}}));
             if(resume&&!automatic)WORK.submit(()->{try{Properties saved=Updater.takeResume();String code=saved==null?null:Updater.code(saved);
@@ -351,7 +351,7 @@ List<java.awt.Rectangle> changed=null;
                 BufferedImage updated=FastScale.update(last.scaled(),frame,changed);if(updated!=null){prepared=new Prepared(frame,w0,h0,updated);return;}}
             int w=displayWidth,h=displayHeight;if(oneToOne||w<1||h<1){prepared=null;return;}double scale=Math.min(w/(double)frame.getWidth(),h/(double)frame.getHeight());int width=stretch?w:Math.max(1,(int)(frame.getWidth()*scale)),height=stretch?h:Math.max(1,(int)(frame.getHeight()*scale));BufferedImage scaled=FastScale.resize(frame,width,height);prepared=new Prepared(frame,w,h,scaled);}
         static boolean mainButton(MouseEvent e){return e.getButton()>=MouseEvent.BUTTON1&&e.getButton()<=MouseEvent.BUTTON3;}
-        View(java.util.function.Supplier<BufferedImage> source,Sender sender){this.source=source;this.sender=sender;setFocusable(true);setBackground(new Color(10,17,26));
+        View(java.util.function.Supplier<BufferedImage> source,Sender sender){this.source=source;this.sender=sender;setFocusable(true);setBackground(Ui.CANVAS);
             addComponentListener(new ComponentAdapter(){public void componentResized(ComponentEvent e){displayWidth=getWidth();displayHeight=getHeight();prepared=null;}});
             MouseAdapter m=new MouseAdapter(){
                 void move(MouseEvent e){if(area.contains(e.getPoint()))sender.send("MOVE "+((e.getX()-area.x)/(double)area.width)+" "+((e.getY()-area.y)/(double)area.height));}
@@ -399,7 +399,7 @@ List<java.awt.Rectangle> changed=null;
             area=new Rectangle(Math.max(0,(getWidth()-w)/2),Math.max(0,(getHeight()-h)/2),w,h);
             g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_BILINEAR);g.setRenderingHint(RenderingHints.KEY_RENDERING,RenderingHints.VALUE_RENDER_QUALITY);
             Prepared ready=prepared;if(!oneToOne&&ready!=null&&ready.source()==im&&ready.width()==getWidth()&&ready.height()==getHeight())g.drawImage(ready.scaled(),area.x,area.y,w,h,null);else {g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_BILINEAR);g.drawImage(im,area.x,area.y,w,h,null);}focusIndicator(g);
-            if(dragOver){g.setColor(new Color(8,20,28,190));g.fillRect(0,0,getWidth(),getHeight());g.setColor(Ui.ACCENT);g.setStroke(new BasicStroke(3,BasicStroke.CAP_ROUND,BasicStroke.JOIN_ROUND,1,new float[]{12,9},0));g.drawRoundRect(12,12,getWidth()-25,getHeight()-25,18,18);
+            if(dragOver){g.setColor(new Color(Ui.BG.getRed(),Ui.BG.getGreen(),Ui.BG.getBlue(),190));g.fillRect(0,0,getWidth(),getHeight());g.setColor(Ui.ACCENT);g.setStroke(new BasicStroke(3,BasicStroke.CAP_ROUND,BasicStroke.JOIN_ROUND,1,new float[]{12,9},0));g.drawRoundRect(12,12,getWidth()-25,getHeight()-25,18,18);
                 g.setFont(new Font(Ui.FONT,Font.BOLD,Math.max(15,Math.min(26,getWidth()/30))));String t="Lepas untuk mengirim ke Desktop klien";g.drawString(t,(getWidth()-g.getFontMetrics().stringWidth(t))/2,getHeight()/2);}
             g.dispose();
         }
@@ -411,7 +411,7 @@ List<java.awt.Rectangle> changed=null;
             if(!enlarged)return;
             String text=active?"⌨  Ketikan & pintasan → klien":"Klik layar untuk mengetik ke klien";
             g.setFont(new Font(Ui.FONT,Font.BOLD,13));FontMetrics fm=g.getFontMetrics();int pad=9,tw=fm.stringWidth(text),bw=tw+pad*2,bh=fm.getHeight()+8;
-            g.setColor(active?new Color(12,52,47,235):new Color(20,30,42,225));g.fillRoundRect(10,10,bw,bh,12,12);
+            g.setColor(new Color(Ui.SURFACE.getRed(),Ui.SURFACE.getGreen(),Ui.SURFACE.getBlue(),active?238:226));g.fillRoundRect(10,10,bw,bh,12,12);
             g.setColor(active?Ui.ACCENT:Ui.LINE);g.setStroke(new BasicStroke(1));g.drawRoundRect(10,10,bw,bh,12,12);
             g.setColor(active?Ui.ACCENT:Ui.MUTED);g.drawString(text,10+pad,10+fm.getAscent()+4);
         }
@@ -519,7 +519,7 @@ List<java.awt.Rectangle> changed=null;
             JPanel access=Ui.transparent(new Ui.WrapLayout(FlowLayout.LEFT,8,5));access.add(Ui.label("Kode koneksi",12,true,Ui.MUTED));password.setPreferredSize(new Dimension(180,36));access.add(password);
             remember.setOpaque(false);remember.setToolTipText("Simpan kode terenkripsi (Windows DPAPI) agar klien tersambung otomatis saat aplikasi dibuka");remember.addActionListener(e->rememberCode());access.add(remember);
             access.add(Ui.label("Kualitas",12,true,Ui.MUTED));quality.setPreferredSize(new Dimension(135,36));quality.addActionListener(e->{for(Card c:cards)c.mode=modeCode(quality.getSelectedIndex());save();});access.add(quality);
-            access.add(Ui.primary("Hubungkan semua",this::connectAll));access.add(button("Putus semua",()->cards.forEach(Card::disconnect)));toolbar.add(access,BorderLayout.NORTH);
+            access.add(Ui.primary("Hubungkan semua",this::connectAll));access.add(button("Putus semua",()->cards.forEach(Card::disconnect)));if(!preview)access.add(Ui.themeToggle());toolbar.add(access,BorderLayout.NORTH);
             password.addFocusListener(new FocusAdapter(){public void focusLost(FocusEvent e){if(remember.isSelected())rememberCode();}});
             JPanel actions=Ui.transparent(new Ui.WrapLayout(FlowLayout.LEFT,8,5));actions.add(button("Pilih semua",()->cards.forEach(c->c.selected.setSelected(true))));actions.add(button("Batal pilih",()->cards.forEach(c->c.selected.setSelected(false))));actions.add(Ui.primary("Kontrol serentak",()->{Card c=cards.stream().filter(x->x.selected.isSelected()&&x.peer!=null).findFirst().orElse(null);if(c==null)error(f,new Exception("Hubungkan dan centang minimal satu klien."));else open(c,true);}));actions.add(button("Lepaskan tombol",this::reset));actions.add(Ui.primary("+ Tambah komputer",this::askNewCard));toolbar.add(actions,BorderLayout.CENTER);
             JPanel top=Ui.transparent(new BorderLayout(0,12));top.add(heading,BorderLayout.NORTH);top.add(toolbar);dashboard.add(top,BorderLayout.NORTH);
@@ -744,6 +744,7 @@ List<java.awt.Rectangle> changed=null;
             StreamTests.run();
             MultiMasterTests.run();
             KeyboardShortcutTests.run();
+            ThemeTests.run();
         }
     }
 }

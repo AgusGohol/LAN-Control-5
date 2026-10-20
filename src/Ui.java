@@ -4,7 +4,20 @@ import java.awt.*;
 import java.awt.event.*;
 
 class Ui {
-    static final Color BG=new Color(13,20,30),SURFACE=new Color(23,33,46),FIELD=new Color(14,23,35),LINE=new Color(42,57,75),TEXT=new Color(231,239,248),MUTED=new Color(177,192,211),ACCENT=new Color(56,205,178),WARN=new Color(242,190,92),DANGER=new Color(250,148,125);
+    // Colors are swappable at runtime (dark <-> light) so the theme can change without reopening the app.
+    static Color BG,SURFACE,FIELD,LINE,TEXT,MUTED,ACCENT,ON_ACCENT,BTN,SELECT,WARN,DANGER,CANVAS;
+    static boolean dark=true;
+    static{palette(true);}
+    /** The icon is a blue gradient on white screens, so the accent is that blue in both themes. */
+    static void palette(boolean d){
+        dark=d;
+        if(d){BG=new Color(13,19,30);SURFACE=new Color(24,34,50);FIELD=new Color(15,23,36);LINE=new Color(40,54,74);
+            TEXT=new Color(231,239,248);MUTED=new Color(168,183,204);ACCENT=new Color(42,130,246);ON_ACCENT=new Color(255,255,255);
+            BTN=new Color(38,52,72);SELECT=new Color(26,64,120);WARN=new Color(242,190,92);DANGER=new Color(250,128,110);CANVAS=new Color(9,15,24);}
+        else{BG=new Color(240,244,250);SURFACE=new Color(255,255,255);FIELD=new Color(236,241,248);LINE=new Color(210,220,233);
+            TEXT=new Color(22,31,46);MUTED=new Color(92,108,130);ACCENT=new Color(23,98,214);ON_ACCENT=new Color(255,255,255);
+            BTN=new Color(226,233,243);SELECT=new Color(205,224,252);WARN=new Color(176,120,12);DANGER=new Color(200,55,45);CANVAS=new Color(222,228,236);}
+    }
     static final String FONT=java.util.Arrays.asList(GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames()).contains("Segoe UI")?"Segoe UI":"SansSerif";
     static void install(){
         Font base=new Font(FONT,Font.PLAIN,15);
@@ -13,26 +26,55 @@ class Ui {
         for(String key:new String[]{"Label","Button","CheckBox","TextField","PasswordField","ComboBox","Table","TableHeader","TextArea","TabbedPane"})UIManager.put(key+".foreground",TEXT);
         for(String key:new String[]{"TextField","PasswordField","ComboBox","TextArea","Table"})UIManager.put(key+".background",FIELD);
         UIManager.put("TextField.caretForeground",TEXT);UIManager.put("PasswordField.caretForeground",TEXT);UIManager.put("TextArea.caretForeground",TEXT);
-        // Plain JButtons (JOptionPane OK/Cancel, file chooser): dark fill so the light Button.foreground stays readable.
-        // Metal/Ocean paints Button.gradient over the background, so the gradient must be dark too.
-        javax.swing.plaf.ColorUIResource buttonFill=new javax.swing.plaf.ColorUIResource(38,54,73);
+        // Plain JButtons (JOptionPane OK/Cancel, file chooser): themed fill so the Button.foreground stays readable.
+        javax.swing.plaf.ColorUIResource buttonFill=new javax.swing.plaf.ColorUIResource(BTN);
         UIManager.put("Button.background",buttonFill);UIManager.put("Button.gradient",java.util.Arrays.asList(.3f,0f,buttonFill,buttonFill,buttonFill));
-        UIManager.put("Button.select",new javax.swing.plaf.ColorUIResource(32,93,93));UIManager.put("Button.focus",ACCENT);UIManager.put("Button.disabledText",MUTED);
+        UIManager.put("Button.select",new javax.swing.plaf.ColorUIResource(SELECT));UIManager.put("Button.focus",ACCENT);UIManager.put("Button.disabledText",MUTED);
         UIManager.put("Button.border",new javax.swing.plaf.BorderUIResource(new CompoundBorder(new LineBorder(LINE,1,true),new EmptyBorder(6,18,6,18))));
         UIManager.put("OptionPane.messageForeground",TEXT);UIManager.put("Table.gridColor",LINE);UIManager.put("TableHeader.background",SURFACE);
-        UIManager.put("Table.selectionBackground",new Color(32,93,93));UIManager.put("Table.selectionForeground",TEXT);
-        UIManager.put("ComboBox.selectionBackground",new Color(32,93,93));UIManager.put("ComboBox.selectionForeground",TEXT);
+        UIManager.put("Table.selectionBackground",SELECT);UIManager.put("Table.selectionForeground",TEXT);
+        UIManager.put("ComboBox.selectionBackground",SELECT);UIManager.put("ComboBox.selectionForeground",TEXT);
         UIManager.put("ComboBox.border",new LineBorder(LINE,1,true));
-        UIManager.put("CheckBox.icon",new Icon(){public int getIconWidth(){return 17;}public int getIconHeight(){return 17;}public void paintIcon(Component c,Graphics g,int x,int y){Graphics2D a=(Graphics2D)g.create();a.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);boolean selected=c instanceof AbstractButton b&&b.isSelected();a.setColor(selected?ACCENT:FIELD);a.fillRoundRect(x+1,y+1,14,14,5,5);a.setColor(selected?ACCENT:LINE);a.drawRoundRect(x+1,y+1,14,14,5,5);if(selected){a.setColor(BG);a.setStroke(new BasicStroke(2));a.drawLine(x+4,y+8,x+7,y+11);a.drawLine(x+7,y+11,x+12,y+5);}a.dispose();}});
+        UIManager.put("CheckBox.icon",new Icon(){public int getIconWidth(){return 17;}public int getIconHeight(){return 17;}public void paintIcon(Component c,Graphics g,int x,int y){Graphics2D a=(Graphics2D)g.create();a.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);boolean selected=c instanceof AbstractButton b&&b.isSelected();a.setColor(selected?ACCENT:FIELD);a.fillRoundRect(x+1,y+1,14,14,5,5);a.setColor(selected?ACCENT:LINE);a.drawRoundRect(x+1,y+1,14,14,5,5);if(selected){a.setColor(ON_ACCENT);a.setStroke(new BasicStroke(2));a.drawLine(x+4,y+8,x+7,y+11);a.drawLine(x+7,y+11,x+12,y+5);}a.dispose();}});
         UIManager.put("TextField.border",new CompoundBorder(new LineBorder(LINE,1,true),new EmptyBorder(8,10,8,10)));
         UIManager.put("PasswordField.border",UIManager.get("TextField.border"));
         UIManager.put("ScrollPane.border",new EmptyBorder(0,0,0,0));UIManager.put("ScrollBar.width",10);
         for(String key:new String[]{"PopupMenu","MenuItem"}){UIManager.put(key+".background",SURFACE);UIManager.put(key+".foreground",TEXT);UIManager.put(key+".font",new Font(FONT,Font.PLAIN,14));}
-        UIManager.put("PopupMenu.border",new LineBorder(LINE,1));UIManager.put("MenuItem.selectionBackground",new Color(32,93,93));UIManager.put("MenuItem.selectionForeground",TEXT);UIManager.put("MenuItem.disabledForeground",MUTED);UIManager.put("Separator.foreground",LINE);
+        UIManager.put("PopupMenu.border",new LineBorder(LINE,1));UIManager.put("MenuItem.selectionBackground",SELECT);UIManager.put("MenuItem.selectionForeground",TEXT);UIManager.put("MenuItem.disabledForeground",MUTED);UIManager.put("Separator.foreground",LINE);
         UIManager.put("ProgressBar.foreground",ACCENT);UIManager.put("ProgressBar.background",FIELD);UIManager.put("ProgressBar.selectionForeground",BG);UIManager.put("ProgressBar.selectionBackground",TEXT);UIManager.put("ProgressBar.font",new Font(FONT,Font.BOLD,13));
-        UIManager.put("ToolTip.font",new Font(FONT,Font.PLAIN,13));
+        UIManager.put("ToolTip.font",new Font(FONT,Font.PLAIN,13));UIManager.put("ToolTip.background",SURFACE);UIManager.put("ToolTip.foreground",TEXT);UIManager.put("ToolTip.border",new LineBorder(LINE,1));
         UIManager.put("TabbedPane.selected",SURFACE);UIManager.put("TabbedPane.selectedForeground",ACCENT);UIManager.put("TabbedPane.contentAreaColor",BG);UIManager.put("TabbedPane.unselectedBackground",BG);UIManager.put("TabbedPane.focus",SURFACE);
         UIManager.put("Table.font",new Font(FONT,Font.PLAIN,14));UIManager.put("TableHeader.font",new Font(FONT,Font.BOLD,13));
+    }
+    /** Listeners (e.g. toggle buttons) notified after a live theme switch so they can refresh their own text. */
+    static final java.util.List<Runnable> themeListeners=new java.util.concurrent.CopyOnWriteArrayList<>();
+    /** Switch theme live: remap the colors already set on open windows, reinstall UI defaults, repaint. No restart. */
+    static void setMode(boolean d){
+        if(d!=dark){
+            Color[] names={BG,SURFACE,FIELD,TEXT,MUTED,ACCENT,WARN,DANGER,CANVAS};
+            int[] olds=new int[names.length];for(int i=0;i<names.length;i++)olds[i]=names[i].getRGB();
+            palette(d);install();
+            Color[] now={BG,SURFACE,FIELD,TEXT,MUTED,ACCENT,WARN,DANGER,CANVAS};
+            java.util.Map<Integer,Color> map=new java.util.HashMap<>();for(int i=0;i<olds.length;i++)map.put(olds[i],now[i]);
+            for(Window w:Window.getWindows())if(w.isDisplayable()){remap(w,map);SwingUtilities.updateComponentTreeUI(w);w.revalidate();w.repaint();}
+            for(Runnable r:themeListeners)try{r.run();}catch(RuntimeException ignored){}
+        }
+        saveDark(d);
+    }
+    static void remap(Component c,java.util.Map<Integer,Color> map){
+        Color f=c.getForeground();if(f!=null){Color n=map.get(f.getRGB());if(n!=null)c.setForeground(n);}
+        Color b=c.getBackground();if(b!=null){Color n=map.get(b.getRGB());if(n!=null)c.setBackground(n);}
+        if(c instanceof Container box)for(Component k:box.getComponents())remap(k,map);
+    }
+    static boolean savedDark(){return !"light".equals(Settings.load(Settings.file("ui.properties")).getProperty("theme"));}
+    static void saveDark(boolean d){try{java.util.Properties p=new java.util.Properties();p.setProperty("theme",d?"dark":"light");Settings.save(Settings.file("ui.properties"),p);}catch(java.io.IOException ignored){}}
+    /** A toggle button that flips the theme live and keeps its own label in sync. */
+    static JButton themeToggle(){
+        JButton[] holder=new JButton[1];
+        Runnable sync=()->holder[0].setText(dark?"☀  Terang":"☾  Gelap");
+        holder[0]=button(dark?"☀  Terang":"☾  Gelap",()->setMode(!dark));
+        holder[0].setToolTipText("Ganti tema terang/gelap. Berubah langsung tanpa menutup aplikasi.");
+        themeListeners.add(sync);return holder[0];
     }
     /** FlowLayout that wraps onto extra rows instead of hiding buttons on narrow windows. */
     static class WrapLayout extends FlowLayout {
@@ -61,7 +103,8 @@ class Ui {
     static class SoftButton extends JButton {
         boolean primary=false;
         SoftButton(String text,Runnable action){super(text);setFont(new Font(FONT,Font.BOLD,14));setBorder(new EmptyBorder(9,14,9,14));setOpaque(false);setContentAreaFilled(false);setFocusPainted(false);setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));setForeground(TEXT);addActionListener(e->action.run());addMouseListener(new MouseAdapter(){public void mouseEntered(MouseEvent e){repaint();}public void mouseExited(MouseEvent e){repaint();}});}
-        protected void paintComponent(Graphics g){Graphics2D a=(Graphics2D)g.create();a.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);Color fill=primary?ACCENT:new Color(38,54,73);if(getModel().isRollover())fill=fill.brighter();if(getModel().isPressed())fill=fill.darker();a.setColor(fill);a.fillRoundRect(0,0,getWidth(),getHeight(),12,12);if(hasFocus()){a.setColor(ACCENT);a.drawRoundRect(1,1,getWidth()-3,getHeight()-3,12,12);}a.dispose();setForeground(primary?new Color(7,40,35):TEXT);super.paintComponent(g);}
+        protected void paintComponent(Graphics g){Graphics2D a=(Graphics2D)g.create();a.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);Color fill=primary?ACCENT:BTN;if(getModel().isRollover())fill=fill.brighter();if(getModel().isPressed())fill=fill.darker();a.setColor(fill);a.fillRoundRect(0,0,getWidth(),getHeight(),12,12);if(hasFocus()){a.setColor(ACCENT);a.drawRoundRect(1,1,getWidth()-3,getHeight()-3,12,12);}a.dispose();setForeground(primary?ON_ACCENT:TEXT);super.paintComponent(g);}
+        public void updateUI(){super.updateUI();setBorder(new EmptyBorder(9,14,9,14));setContentAreaFilled(false);setOpaque(false);setFocusPainted(false);setForeground(TEXT);setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));}
     }
     static JButton primary(String text,Runnable r){SoftButton b=new SoftButton(text,r);b.primary=true;return b;}
     static class Grid extends JPanel implements Scrollable {
