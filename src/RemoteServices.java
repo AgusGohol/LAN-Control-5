@@ -204,7 +204,7 @@ class RemoteServices implements AutoCloseable {
             Files.writeString(startupCmd(),"@echo off\r\nstart \"\" \""+javaw+"\" -jar \""+jar+"\" client --auto\r\n",StandardCharsets.UTF_8);
         }
         static void enable(String password)throws Exception {
-            windows();removeTask();saveCode(password);
+            windows();try{removeTask();}catch(Exception ignored){}saveCode(password);
             Path jar=jar(),javaw=javaw();
             try{powershell("$s=(New-Object -ComObject WScript.Shell).CreateShortcut("+literal(shortcut().toString())+");$s.TargetPath="+literal(javaw.toString())+";$s.Arguments="+literal("-jar \""+jar+"\" client --auto")+";$s.WorkingDirectory="+literal(jar.getParent().toString())+";$s.Description='LAN Control 5 - klien terlihat saat login';"+startupIcon()+"$s.Save()","");Files.deleteIfExists(startupCmd());}
             catch(Exception comBlocked){writeStartupCmd(jar,javaw);try{Files.deleteIfExists(shortcut());}catch(Exception ignored){}}
@@ -214,7 +214,7 @@ class RemoteServices implements AutoCloseable {
         static String load()throws Exception{windows();Properties p=new Properties();try(InputStream in=Files.newInputStream(config())){p.load(in);}
             String stored=p.getProperty("code","");if(stored.startsWith(CODE_MARK))return decryptCode(stored);return un64(protect(stored,false));}
         /** Turn off auto-start (login shortcut and elevated task) but keep the saved code. */
-        static void disableStartup()throws Exception{windows();removeTask();Files.deleteIfExists(shortcut());Files.deleteIfExists(startupCmd());}
+        static void disableStartup()throws Exception{windows();try{removeTask();}catch(Exception ignored){}Files.deleteIfExists(shortcut());Files.deleteIfExists(startupCmd());}
         static void disable()throws Exception{windows();removeTask();Files.deleteIfExists(shortcut());Files.deleteIfExists(startupCmd());Files.deleteIfExists(config());}
     }
 }
