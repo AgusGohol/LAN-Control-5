@@ -17,7 +17,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LanControl {
-    static final String VERSION="1.11.0",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
+    static final String VERSION="1.12.0",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
     static final int PORT=45851, MAX=8*1024*1024;
     static volatile boolean justUpdated;
     static final Color BG=Ui.BG, PANEL=Ui.SURFACE, TEXT=Ui.TEXT;
@@ -155,6 +155,7 @@ public class LanControl {
     static class Agent {
         final JFrame f=window("LAN Control 5 — Klien");final JPasswordField password=new JPasswordField(24);
         final JLabel status=new JLabel("Belum berbagi layar");JButton elevateButton;volatile boolean active=false;volatile ServerSocket listener;
+        final JCheckBox rememberCode=new JCheckBox("Ingat kode"),autoStart=new JCheckBox("Buka & berbagi otomatis saat PC dinyalakan"),adminStartup=new JCheckBox("dengan izin Administrator (kontrol penuh)");
         /** Every connected master (v1.9.0: several at once) with the name it reported, or its IP until it does. */
         final Map<Wire,String> controllers=new ConcurrentHashMap<>();
         final boolean automatic;
@@ -170,12 +171,16 @@ public class LanControl {
                     later(()->{permission.setText(isAdmin?"Izin: ADMINISTRATOR  /  Klik dan ketik ke semua aplikasi":"Izin: BIASA  /  Klik ke aplikasi Administrator (Task Manager, installer) TIDAK berfungsi");permission.setForeground(isAdmin?Ui.ACCENT:Ui.WARN);elevateButton.setVisible(!isAdmin);});}
                 catch(Exception e){later(()->permission.setText("Status izin Windows belum tersedia"));}});
             details.add(Ui.label("Alamat komputer ini: "+addresses(),13,true,Ui.TEXT));details.add(Ui.label("Kode koneksi  /  minimal 12 karakter, sama dengan komputer utama",12,false,Ui.MUTED));
-            password.setPreferredSize(new Dimension(300,40));details.add(password);body.add(details,BorderLayout.NORTH);
+            password.setPreferredSize(new Dimension(300,40));JPanel codeRow=Ui.transparent(new Ui.WrapLayout(FlowLayout.LEFT,10,0));codeRow.add(password);rememberCode.setOpaque(false);rememberCode.setToolTipText("Simpan kode (terenkripsi Windows DPAPI) agar terisi otomatis saat klien dibuka lagi.");rememberCode.addActionListener(e->toggleRemember());codeRow.add(rememberCode);details.add(codeRow);body.add(details,BorderLayout.NORTH);
             JPanel actions=Ui.transparent(new GridLayout(0,1,0,9));actions.add(Ui.primary("Mulai berbagi layar & izinkan kontrol",this::start));actions.add(button("Hentikan berbagi / putuskan kontrol",this::stop));elevateButton=Ui.primary("Mulai ulang sebagai Administrator (disarankan)",this::elevateSelf);elevateButton.setVisible(false);actions.add(elevateButton);
-            actions.add(button("Aktifkan otomatis saat Windows login",()->startup(true)));actions.add(button("Aktifkan otomatis dengan izin administrator",this::startupAdmin));actions.add(button("Nonaktifkan otomatis saat login",()->startup(false)));body.add(actions);
+            autoStart.setOpaque(false);autoStart.setToolTipText("Saat akun Windows ini login, klien terbuka sendiri dan langsung berbagi memakai kode tersimpan. Tidak perlu ada yang menyentuh PC ini.");autoStart.addActionListener(e->applyStartup());
+            adminStartup.setOpaque(false);adminStartup.setToolTipText("Klien terbuka otomatis sebagai Administrator agar komputer utama punya kontrol penuh. Perlu persetujuan UAC satu kali saat mengaktifkan.");adminStartup.addActionListener(e->{if(autoStart.isSelected())applyStartup();});
+            JPanel autoRow=Ui.transparent(new Ui.WrapLayout(FlowLayout.LEFT,18,0));autoRow.add(autoStart);autoRow.add(adminStartup);actions.add(autoRow);
+            actions.add(Ui.label("Atur sekali di PC ini. Untuk mode Administrator, buka klien lewat Jalankan-Klien-Admin.bat lalu centang (UAC muncul sekali).",11,false,Ui.MUTED));
+            body.add(actions);
             JPanel bottom=Ui.transparent(new GridLayout(0,1,0,9));status.setForeground(Ui.ACCENT);bottom.add(status);bottom.add(Ui.label("Resolusi mengikuti jendela kontrol. Kualitas dapat dipilih di komputer utama.",12,false,Ui.MUTED));body.add(bottom,BorderLayout.SOUTH);
             root.add(body);JPanel foot=Ui.transparent(new BorderLayout(10,0));foot.add(Ui.label("Biarkan klien terbuka  /  Port TCP "+PORT+"  /  Tombol hentikan selalu tersedia",12,false,Ui.MUTED));JPanel themeRow=Ui.transparent(new FlowLayout(FlowLayout.RIGHT,0,0));themeRow.add(Ui.themeToggle());foot.add(themeRow,BorderLayout.EAST);root.add(foot,BorderLayout.SOUTH);
-            Icons.apply(f,Icons.KLIEN);f.add(root);f.setSize(900,690);f.setLocationRelativeTo(null);f.setVisible(true);
+            Icons.apply(f,Icons.KLIEN);f.add(root);f.setSize(900,720);f.setLocationRelativeTo(null);f.setVisible(true);
             WORK.submit(()->Icons.ensure(Icons.KLIEN,()->{try{return RemoteServices.Startup.isAdmin()?"--request-admin":"client";}catch(Exception e){return "client";}}));
             if(resume&&!automatic)WORK.submit(()->{try{Properties saved=Updater.takeResume();String code=saved==null?null:Updater.code(saved);
                     if(code!=null){later(()->{password.setText(code);start();status.setText((justUpdated?"Diperbarui ke v"+VERSION:"Berjalan kembali")+"  /  Menunggu kontrol utama...");});
@@ -183,9 +188,24 @@ public class LanControl {
                         if(upgradeStartup){try{RemoteServices.Startup.enableAdmin(code);later(()->status.setText("Startup otomatis kini dengan izin Administrator  /  Menunggu kontrol utama..."));}catch(Exception e){error(f,new Exception("Startup administrator belum aktif: "+message(e)));}}}}
                 catch(Exception e){error(f,new Exception("Isi kode lagi lalu klik Mulai berbagi: "+message(e)));}});
             if(automatic)WORK.submit(()->{try{String code=RemoteServices.Startup.load();later(()->{password.setText(code);start();});}catch(Exception e){error(f,new Exception("Startup otomatis gagal: "+message(e)));}});
+            refreshStartupState();
         }
-        void startupAdmin(){String code=new String(password.getPassword());WORK.submit(()->{try{RemoteServices.Startup.enableAdmin(code);later(()->{JOptionPane.showMessageDialog(f,"Startup administrator aktif untuk akun Windows ini. Klien akan tampil dan berbagi setelah login. Folder aplikasi harus tetap di lokasi ini. Nonaktifkan melalui klien administrator.");start();});}catch(Exception e){error(f,e);}});}
-        void startup(boolean enable){String code=new String(password.getPassword());WORK.submit(()->{try{if(enable)RemoteServices.Startup.enable(code);else RemoteServices.Startup.disable();later(()->{JOptionPane.showMessageDialog(f,enable?"Klien akan terbuka dan berbagi otomatis saat akun Windows ini login. Simpan folder aplikasi di lokasi ini. Untuk mengganti kode, aktifkan ulang dengan kode baru.":"Startup otomatis dinonaktifkan. Klik Hentikan berbagi untuk menghentikan sesi sekarang.");if(enable)start();});}catch(Exception e){error(f,e);}});}
+        /** Checkbox "Ingat kode": save/forget the code only (no auto-start). Forced on while auto-start is active. */
+        void toggleRemember(){boolean want=rememberCode.isSelected();if(!want&&autoStart.isSelected()){rememberCode.setSelected(true);error(f,new Exception("Matikan \"Buka & berbagi otomatis\" dulu sebelum melupakan kode."));return;}
+            String code=new String(password.getPassword());WORK.submit(()->{try{if(want){RemoteServices.Startup.saveCode(code);later(()->status.setText("Kode disimpan (terenkripsi). Akan terisi otomatis saat klien dibuka lagi."));}
+                else{RemoteServices.Startup.forgetCode();later(()->status.setText("Kode tersimpan dihapus dari PC ini."));}}catch(Exception e){String m=message(e);later(()->{rememberCode.setSelected(!want);error(f,new Exception(m));});}});}
+        /** Apply the current auto-start checkboxes (login shortcut, or elevated task for Administrator), reverting the UI on failure. */
+        void applyStartup(){boolean on=autoStart.isSelected(),admin=adminStartup.isSelected();String code=new String(password.getPassword());
+            WORK.submit(()->{try{if(on){if(admin)RemoteServices.Startup.enableAdmin(code);else RemoteServices.Startup.enable(code);
+                    later(()->{rememberCode.setSelected(true);rememberCode.setEnabled(false);status.setText(admin?"Aktif: klien terbuka & berbagi otomatis sebagai Administrator saat PC dinyalakan.":"Aktif: klien terbuka & berbagi otomatis saat PC dinyalakan.");start();});}
+                else{RemoteServices.Startup.disableStartup();later(()->{rememberCode.setEnabled(true);status.setText("Buka otomatis dimatikan."+(rememberCode.isSelected()?" Kode tetap disimpan.":""));});}}
+                catch(Exception e){String m=message(e);later(()->{refreshStartupState();error(f,new Exception(m));});}});}
+        /** Read the real saved state and reflect it in the checkboxes; prefill the saved code on a manual open. */
+        void refreshStartupState(){WORK.submit(()->{boolean code=RemoteServices.Startup.hasCode(),sc=RemoteServices.Startup.hasShortcut(),task=false;try{task=RemoteServices.Startup.taskActive();}catch(Exception ignored){}
+            boolean[] flags=startupFlags(code,sc,task);String saved=null;if(code&&!automatic){try{saved=RemoteServices.Startup.load();}catch(Exception ignored){}}String prefill=saved;
+            later(()->{rememberCode.setSelected(flags[0]);rememberCode.setEnabled(flags[1]);autoStart.setSelected(flags[2]);adminStartup.setSelected(flags[3]);if(prefill!=null&&password.getPassword().length==0)password.setText(prefill);});});}
+        /** State mapping for the client checkboxes: {remember, rememberEnabled, autoStart, admin}. Auto-start implies the code is kept, so "Ingat kode" is forced on and locked. */
+        static boolean[] startupFlags(boolean hasCode,boolean hasShortcut,boolean taskActive){boolean on=hasShortcut||taskActive;return new boolean[]{hasCode||on,!on,on,taskActive};}
         /** IPv4 addresses, skipping automatic 169.254.x.x addresses that cannot be used for control. */
         static String addresses(){List<String>a=new ArrayList<>();try{for(NetworkInterface nic:Collections.list(NetworkInterface.getNetworkInterfaces()))if(nic.isUp()&&!nic.isLoopback())for(InetAddress ip:Collections.list(nic.getInetAddresses()))if(ip instanceof Inet4Address&&!ip.isLinkLocalAddress())a.add(ip.getHostAddress());}catch(Exception ignored){}return a.isEmpty()?"(tidak ada jaringan aktif)":String.join(" / ",a);}
         void stop(){active=false;for(Wire w:controllers.keySet())w.close();try{if(listener!=null)listener.close();}catch(Exception ignored){}status.setText("Berbagi dihentikan");password.setEnabled(true);}
@@ -745,6 +765,7 @@ List<java.awt.Rectangle> changed=null;
             MultiMasterTests.run();
             KeyboardShortcutTests.run();
             ThemeTests.run();
+            ClientStartupTests.run();
         }
     }
 }

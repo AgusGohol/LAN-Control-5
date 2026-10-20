@@ -143,21 +143,29 @@ class RemoteServices implements AutoCloseable {
             String script="Add-Type -AssemblyName System.Security;$b=[Convert]::FromBase64String([Console]::In.ReadToEnd());$r=[Security.Cryptography.ProtectedData]::"+(encrypt?"Protect":"Unprotect")+"($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser);[Console]::Write([Convert]::ToBase64String($r))";
             return powershell(script,password);
         }
-        static void enable(String password)throws Exception {
+        /** Saves only the connection code (Windows DPAPI, this account) — no auto-start. Used by the "Ingat kode" option. */
+        static void saveCode(String password)throws Exception {
             windows();if(password.length()<12)throw new IOException("Gunakan kode minimal 12 karakter.");
-            removeTask();
-            Path jar=Path.of(LanControl.class.getProtectionDomain().getCodeSource().getLocation().toURI()).toAbsolutePath();
-            if(!Files.isRegularFile(jar)||!jar.toString().endsWith(".jar"))throw new IOException("Jalankan JAR dari folder permanen yang sudah diekstrak.");
-            Path javaw=Path.of(System.getProperty("java.home"),"bin","javaw.exe");if(!Files.exists(javaw))throw new IOException("javaw.exe tidak ditemukan.");
             Properties props=new Properties();props.setProperty("code",protect(b64(password),true));Files.createDirectories(config().getParent());
             Path temp=Files.createTempFile(config().getParent(),"settings-",".tmp");try(OutputStream out=Files.newOutputStream(temp)){props.store(out,"LAN Control 5: Windows DPAPI CurrentUser");}
             Files.move(temp,config(),StandardCopyOption.REPLACE_EXISTING);
+        }
+        static boolean hasCode(){return Files.isRegularFile(config());}
+        static void forgetCode()throws Exception{windows();Files.deleteIfExists(config());}
+        static boolean hasShortcut(){try{return Files.exists(shortcut());}catch(Exception e){return false;}}
+        /** Whether the elevated login task is registered (runs the client as Administrator at login, no UAC). */
+        static boolean taskActive()throws Exception{return "yes".equals(powershell(IDENTITY+"$t=Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue;[Console]::Write($(if($null -ne $t){'yes'}else{'no'}))",""));}
+        static void enable(String password)throws Exception {
+            windows();removeTask();saveCode(password);
+            Path jar=jar(),javaw=javaw();
             try{powershell("$s=(New-Object -ComObject WScript.Shell).CreateShortcut("+literal(shortcut().toString())+");$s.TargetPath="+literal(javaw.toString())+";$s.Arguments="+literal("-jar \""+jar+"\" client --auto")+";$s.WorkingDirectory="+literal(jar.getParent().toString())+";$s.Description='LAN Control 5 - klien terlihat saat login';"+startupIcon()+"$s.Save()","");}
-            catch(Exception e){Files.deleteIfExists(config());throw e;}
+            catch(Exception e){throw e;}
         }
         /** Startup shortcut uses the client icon when it can be installed next to the JAR. */
         static String startupIcon(){try{Icons.install();return "$s.IconLocation="+literal(Icons.icon(Icons.KLIEN)+",0")+";";}catch(Exception e){return "";}}
         static String load()throws Exception{windows();Properties p=new Properties();try(InputStream in=Files.newInputStream(config())){p.load(in);}return un64(protect(p.getProperty("code"),false));}
+        /** Turn off auto-start (login shortcut and elevated task) but keep the saved code. */
+        static void disableStartup()throws Exception{windows();removeTask();Files.deleteIfExists(shortcut());}
         static void disable()throws Exception{windows();removeTask();Files.deleteIfExists(shortcut());Files.deleteIfExists(config());}
     }
 }
