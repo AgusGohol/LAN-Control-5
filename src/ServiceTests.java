@@ -29,9 +29,14 @@ class ServiceTests {
             ok(RemoteServices.Startup.literal("O'Brien").equals("'O''Brien'"),"PowerShell literal quoting");
             String elevation=RemoteServices.Startup.elevationScript(Path.of("C:/Program Files/Java/javaw.exe"),Path.of("C:/O'Brien/LAN-Control-5.jar"));
             ok(elevation.contains("-Verb RunAs"),"explicit UAC elevation");ok(elevation.contains("O''Brien"),"elevation path quoting");
-            String task=RemoteServices.Startup.taskScript(Path.of("C:/Java/javaw.exe"),Path.of("C:/Apps/LAN-Control-5.jar"));
-            ok(task.contains("-LogonType Interactive -RunLevel Highest"),"visible elevated logon session");
-            ok(task.contains("-AtLogOn -User $sid"),"startup scoped to current user");
+            // v1.12.8: the elevated login task is defined as Task Scheduler XML and installed with schtasks.exe,
+            // so it works where PowerShell's ScheduledTasks cmdlets are blocked (Constrained Language Mode).
+            String task=RemoteServices.Startup.taskXml(Path.of("C:/Java/javaw.exe"),Path.of("C:/Apps/LAN-Control-5.jar"));
+            ok(task.contains("<RunLevel>HighestAvailable</RunLevel>"),"client runs elevated (Administrator)");
+            ok(task.contains("<LogonType>InteractiveToken</LogonType>"),"interactive logon token, no stored password");
+            ok(task.contains("<LogonTrigger>"),"starts at this user's logon");
+            ok(task.contains("javaw.exe</Command>")&&task.contains("client --auto"),"launches the client and auto-shares");
+            ok(task.contains("LAN-Control-5.jar"),"points at the installed JAR");
             ok(!LanControl.connectionReason(new EOFException()).contains("null"),"readable EOF error");
             rpcTest(dir);
             System.out.println("PASS: 700 KB chunk upload/download, unicode paths, overwrite rejection, rename/delete/mkdir, cancel/disconnect cleanup, encrypted RPC responses and errors.");

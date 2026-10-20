@@ -101,7 +101,6 @@ class RemoteServices implements AutoCloseable {
     public synchronized void close(){UPDATING.compareAndSet(this,null);for(Upload u:uploads.values())try{u.output.close();Files.deleteIfExists(u.temporary);}catch(IOException ignored){}uploads.clear();}
 
     static class Startup {
-        static final String IDENTITY="$id=[Security.Principal.WindowsIdentity]::GetCurrent();$sid=$id.User.Value;$task='LANControl5-Client-'+$sid;";
         static boolean isAdmin()throws Exception{return powershell("$p=New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent());[Console]::Write($p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))","").equalsIgnoreCase("True");}
         static Path jar()throws Exception {Path p=Path.of(LanControl.class.getProtectionDomain().getCodeSource().getLocation().toURI()).toAbsolutePath();if(!Files.isRegularFile(p)||!p.toString().endsWith(".jar"))throw new IOException("Jalankan JAR dari folder permanen yang sudah diekstrak.");return p;}
         static Path javaw()throws Exception {Path p=Path.of(System.getProperty("java.home"),"bin","javaw.exe");if(!Files.exists(p))throw new IOException("javaw.exe tidak ditemukan.");return p;}
@@ -109,19 +108,44 @@ class RemoteServices implements AutoCloseable {
         static String elevationScript(Path executable,Path jar,String arguments){return "Start-Process -FilePath "+literal(executable.toString())+" -ArgumentList "+literal("-jar \""+jar+"\" "+arguments)+" -WorkingDirectory "+literal(jar.getParent().toString())+" -Verb RunAs";}
         static void elevate()throws Exception {elevate("client");}
         static void elevate(String arguments)throws Exception {windows();powershell(elevationScript(javaw(),jar(),arguments),"",180);}
-        static void removeTask()throws Exception {
-            powershell(IDENTITY+"$t=Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue;if($null -ne $t){Unregister-ScheduledTask -TaskName $task -Confirm:$false}","");
+        // The elevated login task is created through schtasks.exe (a native tool), not PowerShell's ScheduledTasks
+        // cmdlets, because those cmdlets are blocked where a security policy forces PowerShell into Constrained
+        // Language Mode. schtasks consumes a full task definition as XML, which keeps the program path and its
+        // arguments in separate fields (no fragile /TR quoting) and asks for no stored password (InteractiveToken).
+        static String taskName(){return "LANControl5-Client-"+System.getProperty("user.name","user").replaceAll("[^A-Za-z0-9_-]","_");}
+        static String account(){String d=System.getenv("USERDOMAIN"),u=System.getenv("USERNAME");if(u==null||u.isBlank())u=System.getProperty("user.name","");return (d!=null&&!d.isBlank()?d+"\\":"")+u;}
+        static String xmlEsc(String s){return s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;");}
+        /** Task Scheduler XML: runs the client at this user's logon, elevated (HighestAvailable) with no UAC prompt. */
+        static String taskXml(Path javaw,Path jar){String acct=xmlEsc(account());return
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"+
+            "<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\n"+
+            "  <RegistrationInfo><Description>LAN Control 5: klien terbuka sebagai Administrator saat login</Description></RegistrationInfo>\n"+
+            "  <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>"+acct+"</UserId></LogonTrigger></Triggers>\n"+
+            "  <Principals><Principal id=\"Author\"><UserId>"+acct+"</UserId><LogonType>InteractiveToken</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals>\n"+
+            "  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>false</AllowHardTerminate><StartWhenAvailable>true</StartWhenAvailable><Enabled>true</Enabled><Hidden>false</Hidden><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><Priority>7</Priority></Settings>\n"+
+            "  <Actions Context=\"Author\"><Exec><Command>"+xmlEsc(javaw.toString())+"</Command><Arguments>-jar &quot;"+xmlEsc(jar.toString())+"&quot; client --auto</Arguments><WorkingDirectory>"+xmlEsc(jar.getParent().toString())+"</WorkingDirectory></Exec></Actions>\n"+
+            "</Task>\n";}
+        /** Runs schtasks.exe and returns {exit code, combined output}. Native tool, unaffected by PowerShell policy. */
+        static String[] runSchtasks(String... args)throws Exception{
+            windows();List<String> cmd=new ArrayList<>();cmd.add("schtasks.exe");cmd.addAll(Arrays.asList(args));
+            Process p=new ProcessBuilder(cmd).redirectErrorStream(true).start();p.getOutputStream().close();
+            var out=LanControl.WORK.submit(()->p.getInputStream().readAllBytes());
+            if(!p.waitFor(20,TimeUnit.SECONDS)){p.destroyForcibly();throw new IOException("schtasks melewati batas waktu.");}
+            byte[] b=out.get(5,TimeUnit.SECONDS);
+            return new String[]{String.valueOf(p.exitValue()),new String(b,java.nio.charset.Charset.defaultCharset()).trim()};
         }
-        static String taskScript(Path executable,Path jar){return IDENTITY+
-            "$a=New-ScheduledTaskAction -Execute "+literal(executable.toString())+" -Argument "+literal("-jar \""+jar+"\" client --auto")+" -WorkingDirectory "+literal(jar.getParent().toString())+";"+
-            "$t=New-ScheduledTaskTrigger -AtLogOn -User $sid;"+
-            "$p=New-ScheduledTaskPrincipal -UserId $sid -LogonType Interactive -RunLevel Highest;"+
-            "$s=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero);"+
-            "Register-ScheduledTask -TaskName $task -Action $a -Trigger $t -Principal $p -Settings $s -Description 'LAN Control 5: klien terlihat saat login, izin administrator disetujui lokal' -Force | Out-Null";
+        static void createAdminTask()throws Exception{
+            Path xml=Files.createTempFile("lan5-task-",".xml");
+            try{Files.writeString(xml,taskXml(javaw(),jar()),StandardCharsets.UTF_8);
+                String[] r=runSchtasks("/Create","/TN",taskName(),"/XML",xml.toString(),"/F");
+                if(!"0".equals(r[0]))throw new IOException("Tidak bisa membuat tugas Administrator"+(r[1].isEmpty()?" (schtasks kode "+r[0]+")":": "+firstLines(r[1])));
+            }finally{try{Files.deleteIfExists(xml);}catch(Exception ignored){}}
         }
+        static void removeTask()throws Exception {try{runSchtasks("/Delete","/TN",taskName(),"/F");}catch(Exception ignored){}}
         static void enableAdmin(String password)throws Exception {
             windows();if(!isAdmin())throw new IOException("Tutup klien, buka Jalankan-Klien-Admin.bat dan setujui UAC di komputer klien dahulu.");
-            enable(password);powershell(taskScript(javaw(),jar()),"");Files.deleteIfExists(shortcut());Files.deleteIfExists(startupCmd());
+            saveCode(password);createAdminTask();
+            try{Files.deleteIfExists(shortcut());}catch(Exception ignored){}try{Files.deleteIfExists(startupCmd());}catch(Exception ignored){}
         }
         static Path config(){return Path.of(System.getenv("APPDATA"),"LANControl5","client.properties");}
         static Path shortcut(){return Path.of(System.getenv("APPDATA"),"Microsoft","Windows","Start Menu","Programs","Startup","LAN Control 5 Klien.lnk");}
@@ -196,7 +220,7 @@ class RemoteServices implements AutoCloseable {
         static void forgetCode()throws Exception{windows();Files.deleteIfExists(config());}
         static boolean hasShortcut(){try{return Files.exists(shortcut())||Files.exists(startupCmd());}catch(Exception e){return false;}}
         /** Whether the elevated login task is registered (runs the client as Administrator at login, no UAC). */
-        static boolean taskActive()throws Exception{return "yes".equals(powershell(IDENTITY+"$t=Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue;[Console]::Write($(if($null -ne $t){'yes'}else{'no'}))",""));}
+        static boolean taskActive()throws Exception{return "0".equals(runSchtasks("/Query","/TN",taskName())[0]);}
         static Path startupCmd(){return Path.of(System.getenv("APPDATA"),"Microsoft","Windows","Start Menu","Programs","Startup","LAN Control 5 Klien.cmd");}
         /** Writes a .cmd launcher in the Startup folder (no COM) - used when creating a .lnk shortcut is blocked by policy. */
         static void writeStartupCmd(Path jar,Path javaw)throws Exception{
