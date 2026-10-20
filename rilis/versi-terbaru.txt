@@ -1,2 +1,2 @@
 # LAN Control 5 - versi terbaru untuk pembaruan otomatis
-versi=1.9.0
+versi=1.10.0
