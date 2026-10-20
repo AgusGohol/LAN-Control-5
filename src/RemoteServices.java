@@ -135,7 +135,9 @@ class RemoteServices implements AutoCloseable {
             // where stderr is serialized or restricted. The message is the exception text, never the piped input.
             windows();String wrapped="$ProgressPreference='SilentlyContinue';$ErrorActionPreference='Stop';try{"+script+"}catch{try{[Console]::Out.Write('LANERR:'+$_.Exception.GetType().Name+': '+$_.Exception.Message)}catch{};exit 1}";
             String encoded=Base64.getEncoder().encodeToString(wrapped.getBytes(StandardCharsets.UTF_16LE));
-            Process p=new ProcessBuilder("powershell.exe","-NoProfile","-NonInteractive","-EncodedCommand",encoded).start();
+            // Launch PowerShell THROUGH cmd.exe: on locked-down PCs a security policy can force PowerShell into Constrained
+            // Language Mode (blocking DPAPI/COM/.NET) when started directly by a GUI app, but not when started by cmd.
+            Process p=new ProcessBuilder("cmd.exe","/c","powershell.exe","-NoProfile","-NonInteractive","-EncodedCommand",encoded).start();
             try(OutputStream out=p.getOutputStream()){out.write(input.getBytes(StandardCharsets.UTF_8));}
             var stdout=LanControl.WORK.submit(()->p.getInputStream().readAllBytes());
             var stderr=LanControl.WORK.submit(()->p.getErrorStream().readAllBytes());
