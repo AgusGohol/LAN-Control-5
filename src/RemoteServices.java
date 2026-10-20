@@ -112,7 +112,7 @@ class RemoteServices implements AutoCloseable {
         // cmdlets, because those cmdlets are blocked where a security policy forces PowerShell into Constrained
         // Language Mode. schtasks consumes a full task definition as XML, which keeps the program path and its
         // arguments in separate fields (no fragile /TR quoting) and asks for no stored password (InteractiveToken).
-        static String taskName(){return "LANControl5-Client-"+System.getProperty("user.name","user").replaceAll("[^A-Za-z0-9_-]","_");}
+        static String taskName(){return "LANControl5Uji-Client-"+System.getProperty("user.name","user").replaceAll("[^A-Za-z0-9_-]","_");}
         static String account(){String d=System.getenv("USERDOMAIN"),u=System.getenv("USERNAME");if(u==null||u.isBlank())u=System.getProperty("user.name","");return (d!=null&&!d.isBlank()?d+"\\":"")+u;}
         static String xmlEsc(String s){return s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;");}
         /** Task Scheduler XML: runs the client at this user's logon, elevated (HighestAvailable) with no UAC prompt. */
@@ -149,8 +149,8 @@ class RemoteServices implements AutoCloseable {
             saveCode(password);createAdminTask();
             try{Files.deleteIfExists(shortcut());}catch(Exception ignored){}try{Files.deleteIfExists(startupCmd());}catch(Exception ignored){}
         }
-        static Path config(){return Path.of(System.getenv("APPDATA"),"LANControl5","client.properties");}
-        static Path shortcut(){return Path.of(System.getenv("APPDATA"),"Microsoft","Windows","Start Menu","Programs","Startup","LAN Control 5 Klien.lnk");}
+        static Path config(){return Path.of(System.getenv("APPDATA"),"LANControl5Uji","client.properties");}
+        static Path shortcut(){return Path.of(System.getenv("APPDATA"),"Microsoft","Windows","Start Menu","Programs","Startup","LAN Control 5 UJI Klien.lnk");}
         static String literal(String s){return "'"+s.replace("'","''")+"'";}
         static String powershell(String script,String input)throws Exception{return powershell(script,input,20);}
         // Default calls (shortcut, scheduled task, queries) carry no secret, so a failure reports the real Windows reason.
@@ -197,7 +197,7 @@ class RemoteServices implements AutoCloseable {
         // (blocked on PCs where a security policy forces PowerShell into Constrained Language Mode).
         static final String CODE_MARK="A1:";
         static javax.crypto.SecretKey codeKey()throws Exception{
-            String seed=(System.getProperty("user.name","?")+"|"+String.valueOf(System.getenv("COMPUTERNAME"))+"|LANControl5").toLowerCase();
+            String seed=(System.getProperty("user.name","?")+"|"+String.valueOf(System.getenv("COMPUTERNAME"))+"|LANControl5Uji").toLowerCase();
             javax.crypto.spec.PBEKeySpec spec=new javax.crypto.spec.PBEKeySpec(seed.toCharArray(),"LC5-code-salt-v1".getBytes(StandardCharsets.UTF_8),100000,256);
             return new javax.crypto.spec.SecretKeySpec(javax.crypto.SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).getEncoded(),"AES");
         }
@@ -223,7 +223,7 @@ class RemoteServices implements AutoCloseable {
         static boolean hasShortcut(){try{return Files.exists(shortcut())||Files.exists(startupCmd());}catch(Exception e){return false;}}
         /** Whether the elevated login task is registered (runs the client as Administrator at login, no UAC). */
         static boolean taskActive()throws Exception{return "0".equals(runSchtasks("/Query","/TN",taskName())[0]);}
-        static Path startupCmd(){return Path.of(System.getenv("APPDATA"),"Microsoft","Windows","Start Menu","Programs","Startup","LAN Control 5 Klien.cmd");}
+        static Path startupCmd(){return Path.of(System.getenv("APPDATA"),"Microsoft","Windows","Start Menu","Programs","Startup","LAN Control 5 UJI Klien.cmd");}
         /** Writes a .cmd launcher in the Startup folder (no COM) - used when creating a .lnk shortcut is blocked by policy. */
         static void writeStartupCmd(Path jar,Path javaw)throws Exception{
             Files.createDirectories(startupCmd().getParent());

@@ -3,9 +3,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.Properties;
 
-/** Small UTF-8 properties store in %APPDATA%\LANControl5 (or ~/.lancontrol5 outside Windows). */
+/** Small UTF-8 properties store in %APPDATA%\LANControl5 (or ~/.lancontrol5uji outside Windows). */
 class Settings {
-    static Path folder(){String app=System.getenv("APPDATA");return app!=null&&!app.isBlank()?Path.of(app,"LANControl5"):Path.of(System.getProperty("user.home"),".lancontrol5");}
+    static Path folder(){String app=System.getenv("APPDATA");return app!=null&&!app.isBlank()?Path.of(app,"LANControl5Uji"):Path.of(System.getProperty("user.home"),".lancontrol5uji");}
     static Path file(String name){return folder().resolve(name);}
     static Properties load(Path file){
         Properties p=new Properties();

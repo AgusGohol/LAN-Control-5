@@ -13,7 +13,7 @@ import java.util.jar.*;
 class Updater {
     static final String JAR="LAN-Control-5.jar",PREVIOUS="LAN-Control-5.previous.jar",UPDATED_FLAG="--updated";
     /** GitHub repository that publishes releases ("owner/name"); empty disables the internet check. */
-    static final String REPO="AgusGohol/LAN-Control-5";
+    static final String REPO="AgusGohol/LAN-Control-5-Uji";
     /** Ed25519 release key. Only JARs signed by the matching private key (kept offline by the publisher) are installed from the internet. */
     static volatile String publicKey="MCowBQYDK2VwAyEAILcdG8IcO6s3WYYxHUbmXSQHwP15CG/Z40dy37iTo6A=";
     static volatile String apiBase="https://raw.githubusercontent.com",repository=REPO;

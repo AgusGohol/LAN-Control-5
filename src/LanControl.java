@@ -18,7 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LanControl {
     static final String VERSION="1.12.11",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
-    static final int PORT=45851, MAX=8*1024*1024;
+    static final int PORT=45971, MAX=8*1024*1024;
     static volatile boolean justUpdated;
     static final Color BG=Ui.BG, PANEL=Ui.SURFACE, TEXT=Ui.TEXT;
     static final ExecutorService WORK=Executors.newCachedThreadPool(LanControl::daemon);
@@ -153,7 +153,7 @@ public class LanControl {
     }
 
     static class Agent {
-        final JFrame f=window("LAN Control 5 — Klien");final JPasswordField password=new JPasswordField(24);
+        final JFrame f=window("LAN Control 5 (UJI) — Klien");final JPasswordField password=new JPasswordField(24);
         final JLabel status=new JLabel("Belum berbagi layar");JButton elevateButton;volatile boolean active=false;volatile ServerSocket listener;
         final JCheckBox rememberCode=new JCheckBox("Ingat kode"),autoStart=new JCheckBox("Buka & berbagi otomatis saat PC dinyalakan"),adminStartup=new JCheckBox("dengan izin Administrator (kontrol penuh)");
         /** Every connected master (v1.9.0: several at once) with the name it reported, or its IP until it does. */
@@ -164,7 +164,7 @@ public class LanControl {
         Agent(boolean automatic,boolean resume){this(automatic,resume,false);}
         Agent(boolean automatic,boolean resume,boolean upgradeStartup){this.automatic=automatic;
             JPanel root=new JPanel(new BorderLayout(0,22));root.setBorder(BorderFactory.createEmptyBorder(26,28,24,28));
-            JPanel heading=Ui.transparent(new GridLayout(0,1,0,7));heading.add(Ui.label("LAN CONTROL 5",12,true,Ui.ACCENT));heading.add(Ui.label("Bagikan komputer ini",27,true,Ui.TEXT));heading.add(Ui.label("Klien v"+VERSION+"  /  Kontrol layar dan file melalui LAN atau Tailscale",13,false,Ui.MUTED));root.add(heading,BorderLayout.NORTH);
+            JPanel heading=Ui.transparent(new GridLayout(0,1,0,7));heading.add(Ui.label("LAN CONTROL 5 (UJI)",12,true,Ui.ACCENT));heading.add(Ui.label("Bagikan komputer ini",27,true,Ui.TEXT));heading.add(Ui.label("Klien v"+VERSION+"  /  Kontrol layar dan file melalui LAN atau Tailscale",13,false,Ui.MUTED));root.add(heading,BorderLayout.NORTH);
             Ui.RoundPanel body=new Ui.RoundPanel(new BorderLayout(0,18));JPanel details=Ui.transparent(new GridLayout(0,1,0,9));
             JLabel permission=Ui.label("Memeriksa izin Windows...",13,false,Ui.MUTED);details.add(permission);
             WORK.submit(()->{try{boolean isAdmin=RemoteServices.Startup.isAdmin();admin=isAdmin;RemoteServices.privilege=isAdmin?"ADMIN":"BIASA";
@@ -558,7 +558,7 @@ List<java.awt.Rectangle> changed=null;
         Path settingsFile=Settings.file("controller.properties");volatile String protectedCode;String protectedPlain;long alerted;
         Controller(){this(false);}
         Controller(boolean preview){this.preview=preview;
-            f=preview?null:window("LAN Control 5 v"+VERSION+" — Kontrol Utama");dashboard.setBorder(BorderFactory.createEmptyBorder(16,22,12,22));
+            f=preview?null:window("LAN Control 5 (UJI) v"+VERSION+" — Kontrol Utama");dashboard.setBorder(BorderFactory.createEmptyBorder(16,22,12,22));
             JPanel heading=Ui.transparent(new BorderLayout());JPanel words=Ui.transparent(new GridLayout(0,1,0,6));words.add(Ui.label("LAN CONTROL 5  /  v"+VERSION,12,true,Ui.ACCENT));words.add(Ui.label("Ruang kontrol",29,true,Ui.TEXT));words.add(Ui.label("Semua komputer, satu tempat. Pilih klien untuk bekerja bersama.",13,false,Ui.MUTED));heading.add(words);heading.add(count,BorderLayout.EAST);
             Ui.RoundPanel toolbar=new Ui.RoundPanel(new BorderLayout(18,4));toolbar.setBorder(BorderFactory.createEmptyBorder(8,10,8,10));
             JPanel access=Ui.transparent(new Ui.WrapLayout(FlowLayout.LEFT,8,5));access.add(Ui.label("Kode koneksi",12,true,Ui.MUTED));password.setPreferredSize(new Dimension(180,36));access.add(password);
