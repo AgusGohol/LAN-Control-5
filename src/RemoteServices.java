@@ -131,9 +131,9 @@ class RemoteServices implements AutoCloseable {
         static String powershell(String script,String input,int timeout)throws Exception{return powershell(script,input,timeout,true);}
         // hidden=true suppresses stderr for calls whose input is the connection code (DPAPI), so the secret never reaches a dialog.
         static String powershell(String script,String input,int timeout,boolean showReason)throws Exception{
-            // ProgressPreference off so module auto-load progress does not pollute stderr. The try/catch writes the real
-            // exception as plain text (LANERR:...) straight to stderr, bypassing PowerShell's CLIXML serialization.
-            windows();String wrapped="$ProgressPreference='SilentlyContinue';$ErrorActionPreference='Stop';try{"+script+"}catch{[Console]::Error.Write('LANERR:'+$_.Exception.Message);exit 1}";
+            // Progress off; the try/catch writes the real exception as plain text (LANERR:...) to STDOUT, which works even
+            // where stderr is serialized or restricted. The message is the exception text, never the piped input.
+            windows();String wrapped="$ProgressPreference='SilentlyContinue';$ErrorActionPreference='Stop';try{"+script+"}catch{try{[Console]::Out.Write('LANERR:'+$_.Exception.GetType().Name+': '+$_.Exception.Message)}catch{};exit 1}";
             String encoded=Base64.getEncoder().encodeToString(wrapped.getBytes(StandardCharsets.UTF_16LE));
             Process p=new ProcessBuilder("powershell.exe","-NoProfile","-NonInteractive","-EncodedCommand",encoded).start();
             try(OutputStream out=p.getOutputStream()){out.write(input.getBytes(StandardCharsets.UTF_8));}
@@ -141,8 +141,8 @@ class RemoteServices implements AutoCloseable {
             var stderr=LanControl.WORK.submit(()->p.getErrorStream().readAllBytes());
             if(!p.waitFor(timeout,TimeUnit.SECONDS)){p.destroyForcibly();throw new IOException("Pengaturan Windows melewati batas waktu.");}
             byte[] result=stdout.get(5,TimeUnit.SECONDS);byte[] errBytes=stderr.get(5,TimeUnit.SECONDS);
-            if(p.exitValue()!=0){String err=new String(errBytes,StandardCharsets.UTF_8);int i=err.indexOf("LANERR:");
-                String reason=showReason?firstLines(i>=0?err.substring(i+7):err):"";
+            if(p.exitValue()!=0){String all=new String(result,StandardCharsets.UTF_8)+"\n"+new String(errBytes,StandardCharsets.UTF_8);int i=all.indexOf("LANERR:");
+                String reason=i>=0?firstLines(all.substring(i+7)):firstLines(all);
                 throw new IOException("Pengaturan Windows gagal."+(reason.isEmpty()?" (kode keluar "+p.exitValue()+", tanpa pesan). Pastikan PowerShell tersedia dan folder aplikasi dapat diakses.":" "+reason));}
             return new String(result,StandardCharsets.UTF_8).trim();
         }
