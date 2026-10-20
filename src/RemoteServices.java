@@ -131,7 +131,8 @@ class RemoteServices implements AutoCloseable {
         static String powershell(String script,String input,int timeout)throws Exception{return powershell(script,input,timeout,true);}
         // hidden=true suppresses stderr for calls whose input is the connection code (DPAPI), so the secret never reaches a dialog.
         static String powershell(String script,String input,int timeout,boolean showReason)throws Exception{
-            windows();String encoded=Base64.getEncoder().encodeToString(("$ErrorActionPreference='Stop';"+script).getBytes(StandardCharsets.UTF_16LE));
+            // ProgressPreference off: the first load of a module (e.g. ScheduledTasks) otherwise floods stderr with CLIXML progress that hides the real error.
+            windows();String encoded=Base64.getEncoder().encodeToString(("$ProgressPreference='SilentlyContinue';$ErrorActionPreference='Stop';"+script).getBytes(StandardCharsets.UTF_16LE));
             Process p=new ProcessBuilder("powershell.exe","-NoProfile","-NonInteractive","-EncodedCommand",encoded).start();
             try(OutputStream out=p.getOutputStream()){out.write(input.getBytes(StandardCharsets.UTF_8));}
             var stdout=LanControl.WORK.submit(()->p.getInputStream().readAllBytes());
@@ -142,9 +143,22 @@ class RemoteServices implements AutoCloseable {
                 throw new IOException("Pengaturan Windows gagal."+(reason.isEmpty()?" Pastikan PowerShell tersedia dan folder aplikasi dapat diakses.":" "+reason));}
             return new String(result,StandardCharsets.UTF_8).trim();
         }
-        /** First meaningful lines of a PowerShell error, trimmed for a readable dialog. */
-        static String firstLines(String text){StringBuilder s=new StringBuilder();for(String line:text.split("\\R")){String t=line.strip();if(t.isEmpty()||t.startsWith("At line:")||t.startsWith("+"))continue;if(s.length()>0)s.append(" ");s.append(t);if(s.length()>300)break;}
-            String out=s.toString();return out.length()>300?out.substring(0,300)+"...":out;}
+        /** Readable PowerShell error for a dialog: decode CLIXML error records, drop noise, trim. */
+        static String firstLines(String text){
+            text=text.strip();
+            if(text.contains("CLIXML")){
+                // Pull the human text out of the serialized error/warning records; fall back to stripping tags.
+                StringBuilder clix=new StringBuilder();java.util.regex.Matcher m=java.util.regex.Pattern.compile("<S S=\"(?:Error|Warning)\">(.*?)</S>",java.util.regex.Pattern.DOTALL).matcher(text);
+                while(m.find())clix.append(unclix(m.group(1)));
+                text=clix.length()>0?clix.toString():unclix(text.replaceAll("#< CLIXML","").replaceAll("<[^>]*>"," "));
+            }
+            StringBuilder s=new StringBuilder();for(String line:text.split("\\R")){String t=line.strip();if(t.isEmpty()||t.startsWith("At line:")||t.startsWith("+")||t.startsWith("CategoryInfo")||t.startsWith("FullyQualifiedErrorId"))continue;if(s.length()>0)s.append(" ");s.append(t);if(s.length()>300)break;}
+            String out=s.toString().replaceAll("\\s+"," ").strip();return out.length()>300?out.substring(0,300)+"...":out;}
+        /** Undo CLIXML escaping: _xHHHH_ control chars and basic XML entities. */
+        static String unclix(String s){
+            java.util.regex.Matcher m=java.util.regex.Pattern.compile("_x([0-9A-Fa-f]{4})_").matcher(s);StringBuilder b=new StringBuilder();
+            while(m.find())m.appendReplacement(b,java.util.regex.Matcher.quoteReplacement(String.valueOf((char)Integer.parseInt(m.group(1),16))));m.appendTail(b);
+            return b.toString().replace("&lt;","<").replace("&gt;",">").replace("&amp;","&").replace("&quot;","\"").replace("&apos;","'");}
         static String protect(String password,boolean encrypt)throws Exception {
             String script="Add-Type -AssemblyName System.Security;$b=[Convert]::FromBase64String([Console]::In.ReadToEnd());$r=[Security.Cryptography.ProtectedData]::"+(encrypt?"Protect":"Unprotect")+"($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser);[Console]::Write([Convert]::ToBase64String($r))";
             return powershell(script,password,20,false);
