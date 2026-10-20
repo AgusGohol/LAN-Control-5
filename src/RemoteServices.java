@@ -121,7 +121,7 @@ class RemoteServices implements AutoCloseable {
         }
         static void enableAdmin(String password)throws Exception {
             windows();if(!isAdmin())throw new IOException("Tutup klien, buka Jalankan-Klien-Admin.bat dan setujui UAC di komputer klien dahulu.");
-            enable(password);powershell(taskScript(javaw(),jar()),"");Files.deleteIfExists(shortcut());
+            enable(password);powershell(taskScript(javaw(),jar()),"");Files.deleteIfExists(shortcut());Files.deleteIfExists(startupCmd());
         }
         static Path config(){return Path.of(System.getenv("APPDATA"),"LANControl5","client.properties");}
         static Path shortcut(){return Path.of(System.getenv("APPDATA"),"Microsoft","Windows","Start Menu","Programs","Startup","LAN Control 5 Klien.lnk");}
@@ -135,9 +135,7 @@ class RemoteServices implements AutoCloseable {
             // where stderr is serialized or restricted. The message is the exception text, never the piped input.
             windows();String wrapped="$ProgressPreference='SilentlyContinue';$ErrorActionPreference='Stop';try{"+script+"}catch{try{[Console]::Out.Write('LANERR:'+$_.Exception.GetType().Name+': '+$_.Exception.Message)}catch{};exit 1}";
             String encoded=Base64.getEncoder().encodeToString(wrapped.getBytes(StandardCharsets.UTF_16LE));
-            // Launch PowerShell THROUGH cmd.exe: on locked-down PCs a security policy can force PowerShell into Constrained
-            // Language Mode (blocking DPAPI/COM/.NET) when started directly by a GUI app, but not when started by cmd.
-            Process p=new ProcessBuilder("cmd.exe","/c","powershell.exe","-NoProfile","-NonInteractive","-EncodedCommand",encoded).start();
+            Process p=new ProcessBuilder("powershell.exe","-NoProfile","-NonInteractive","-EncodedCommand",encoded).start();
             try(OutputStream out=p.getOutputStream()){out.write(input.getBytes(StandardCharsets.UTF_8));}
             var stdout=LanControl.WORK.submit(()->p.getInputStream().readAllBytes());
             var stderr=LanControl.WORK.submit(()->p.getErrorStream().readAllBytes());
@@ -169,28 +167,54 @@ class RemoteServices implements AutoCloseable {
             return powershell(script,password,20,false);
         }
         /** Saves only the connection code (Windows DPAPI, this account) — no auto-start. Used by the "Ingat kode" option. */
+        // Code storage uses AES-GCM with a key derived from this Windows user + computer, so it never needs PowerShell/DPAPI
+        // (blocked on PCs where a security policy forces PowerShell into Constrained Language Mode).
+        static final String CODE_MARK="A1:";
+        static javax.crypto.SecretKey codeKey()throws Exception{
+            String seed=(System.getProperty("user.name","?")+"|"+String.valueOf(System.getenv("COMPUTERNAME"))+"|LANControl5").toLowerCase();
+            javax.crypto.spec.PBEKeySpec spec=new javax.crypto.spec.PBEKeySpec(seed.toCharArray(),"LC5-code-salt-v1".getBytes(StandardCharsets.UTF_8),100000,256);
+            return new javax.crypto.spec.SecretKeySpec(javax.crypto.SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).getEncoded(),"AES");
+        }
+        static String encryptCode(String plain)throws Exception{
+            byte[] iv=new byte[12];new java.security.SecureRandom().nextBytes(iv);
+            javax.crypto.Cipher c=javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");c.init(javax.crypto.Cipher.ENCRYPT_MODE,codeKey(),new javax.crypto.spec.GCMParameterSpec(128,iv));
+            byte[] ct=c.doFinal(plain.getBytes(StandardCharsets.UTF_8));byte[] out=new byte[12+ct.length];System.arraycopy(iv,0,out,0,12);System.arraycopy(ct,0,out,12,ct.length);
+            return CODE_MARK+Base64.getEncoder().encodeToString(out);
+        }
+        static String decryptCode(String stored)throws Exception{
+            byte[] in=Base64.getDecoder().decode(stored.substring(CODE_MARK.length()));
+            javax.crypto.Cipher c=javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");c.init(javax.crypto.Cipher.DECRYPT_MODE,codeKey(),new javax.crypto.spec.GCMParameterSpec(128,java.util.Arrays.copyOf(in,12)));
+            return new String(c.doFinal(java.util.Arrays.copyOfRange(in,12,in.length)),StandardCharsets.UTF_8);
+        }
         static void saveCode(String password)throws Exception {
             windows();if(password.length()<12)throw new IOException("Gunakan kode minimal 12 karakter.");
-            Properties props=new Properties();props.setProperty("code",protect(b64(password),true));Files.createDirectories(config().getParent());
-            Path temp=Files.createTempFile(config().getParent(),"settings-",".tmp");try(OutputStream out=Files.newOutputStream(temp)){props.store(out,"LAN Control 5: Windows DPAPI CurrentUser");}
+            Properties props=new Properties();props.setProperty("code",encryptCode(password));Files.createDirectories(config().getParent());
+            Path temp=Files.createTempFile(config().getParent(),"settings-",".tmp");try(OutputStream out=Files.newOutputStream(temp)){props.store(out,"LAN Control 5");}
             Files.move(temp,config(),StandardCopyOption.REPLACE_EXISTING);
         }
         static boolean hasCode(){return Files.isRegularFile(config());}
         static void forgetCode()throws Exception{windows();Files.deleteIfExists(config());}
-        static boolean hasShortcut(){try{return Files.exists(shortcut());}catch(Exception e){return false;}}
+        static boolean hasShortcut(){try{return Files.exists(shortcut())||Files.exists(startupCmd());}catch(Exception e){return false;}}
         /** Whether the elevated login task is registered (runs the client as Administrator at login, no UAC). */
         static boolean taskActive()throws Exception{return "yes".equals(powershell(IDENTITY+"$t=Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue;[Console]::Write($(if($null -ne $t){'yes'}else{'no'}))",""));}
+        static Path startupCmd(){return Path.of(System.getenv("APPDATA"),"Microsoft","Windows","Start Menu","Programs","Startup","LAN Control 5 Klien.cmd");}
+        /** Writes a .cmd launcher in the Startup folder (no COM) - used when creating a .lnk shortcut is blocked by policy. */
+        static void writeStartupCmd(Path jar,Path javaw)throws Exception{
+            Files.createDirectories(startupCmd().getParent());
+            Files.writeString(startupCmd(),"@echo off\r\nstart \"\" \""+javaw+"\" -jar \""+jar+"\" client --auto\r\n",StandardCharsets.UTF_8);
+        }
         static void enable(String password)throws Exception {
             windows();removeTask();saveCode(password);
             Path jar=jar(),javaw=javaw();
-            try{powershell("$s=(New-Object -ComObject WScript.Shell).CreateShortcut("+literal(shortcut().toString())+");$s.TargetPath="+literal(javaw.toString())+";$s.Arguments="+literal("-jar \""+jar+"\" client --auto")+";$s.WorkingDirectory="+literal(jar.getParent().toString())+";$s.Description='LAN Control 5 - klien terlihat saat login';"+startupIcon()+"$s.Save()","");}
-            catch(Exception e){throw e;}
+            try{powershell("$s=(New-Object -ComObject WScript.Shell).CreateShortcut("+literal(shortcut().toString())+");$s.TargetPath="+literal(javaw.toString())+";$s.Arguments="+literal("-jar \""+jar+"\" client --auto")+";$s.WorkingDirectory="+literal(jar.getParent().toString())+";$s.Description='LAN Control 5 - klien terlihat saat login';"+startupIcon()+"$s.Save()","");Files.deleteIfExists(startupCmd());}
+            catch(Exception comBlocked){writeStartupCmd(jar,javaw);try{Files.deleteIfExists(shortcut());}catch(Exception ignored){}}
         }
         /** Startup shortcut uses the client icon when it can be installed next to the JAR. */
         static String startupIcon(){try{Icons.install();return "$s.IconLocation="+literal(Icons.icon(Icons.KLIEN)+",0")+";";}catch(Exception e){return "";}}
-        static String load()throws Exception{windows();Properties p=new Properties();try(InputStream in=Files.newInputStream(config())){p.load(in);}return un64(protect(p.getProperty("code"),false));}
+        static String load()throws Exception{windows();Properties p=new Properties();try(InputStream in=Files.newInputStream(config())){p.load(in);}
+            String stored=p.getProperty("code","");if(stored.startsWith(CODE_MARK))return decryptCode(stored);return un64(protect(stored,false));}
         /** Turn off auto-start (login shortcut and elevated task) but keep the saved code. */
-        static void disableStartup()throws Exception{windows();removeTask();Files.deleteIfExists(shortcut());}
-        static void disable()throws Exception{windows();removeTask();Files.deleteIfExists(shortcut());Files.deleteIfExists(config());}
+        static void disableStartup()throws Exception{windows();removeTask();Files.deleteIfExists(shortcut());Files.deleteIfExists(startupCmd());}
+        static void disable()throws Exception{windows();removeTask();Files.deleteIfExists(shortcut());Files.deleteIfExists(startupCmd());Files.deleteIfExists(config());}
     }
 }

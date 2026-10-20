@@ -1,9 +1,17 @@
 import java.util.*;
+import java.util.Base64;
 
 /** v1.12.0: client can remember the connection code and auto-open/share on login. This covers the checkbox state mapping. */
 class ClientStartupTests {
     static void check(boolean ok,String message){if(!ok)throw new AssertionError(message);}
-    static void run(){
+    static void run()throws Exception{
+        // v1.12.6: code stored with AES (no PowerShell/DPAPI), so "Ingat kode" works on locked-down PCs.
+        String code="Rahasia-Lab-2026!";String enc=RemoteServices.Startup.encryptCode(code);
+        check(enc.startsWith("A1:"),"stored code carries the AES marker");
+        check(!enc.contains(code),"plaintext code is not visible in the stored value");
+        check(RemoteServices.Startup.decryptCode(enc).equals(code),"code decrypts back to the original");
+        check(!RemoteServices.Startup.encryptCode(code).equals(enc),"each encryption uses a fresh random IV");
+        boolean tampered=false;try{RemoteServices.Startup.decryptCode("A1:"+Base64.getEncoder().encodeToString(new byte[40]));}catch(Exception e){tampered=true;}check(tampered,"garbage/tampered ciphertext is rejected");
         // {remember, rememberEnabled, autoStart, admin}
         check(Arrays.equals(LanControl.Agent.startupFlags(false,false,false),new boolean[]{false,true,false,false}),"fresh client: nothing checked, remember editable");
         check(Arrays.equals(LanControl.Agent.startupFlags(true,false,false),new boolean[]{true,true,false,false}),"Ingat kode only: remember on and still editable, no auto-start");
