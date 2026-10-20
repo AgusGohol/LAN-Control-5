@@ -16,6 +16,14 @@ Klik layar klien dulu (di kartu atau jendela Perbesar), lalu tekan:
   Ctrl + Alt + P        Print Screen (juga: Ctrl + Alt + tanda + di numpad)
   Ctrl + Alt + K        Lepaskan semua tombol yang tertahan di klien
 
+PENANDA FOKUS & DAFTAR PINTASAN DI JENDELA PERBESAR
+- Di jendela "Perbesar", saat layar klien aktif (Anda sudah mengkliknya) muncul
+  bingkai hijau dan label "⌨ Ketikan & pintasan → klien": tanda bahwa ketikan
+  dan pintasan keyboard Anda sekarang masuk ke klien, bukan ke komputer utama
+  (mirip AnyDesk). Saat belum aktif, labelnya "Klik layar untuk mengetik ke klien".
+- Daftar pintasan keyboard (Ctrl+Alt+E → Win+E, Alt+PgUp → Alt+Tab, dll.) kini
+  tampil di bagian bawah jendela Perbesar, jadi tidak perlu membuka menu.
+
 KENAPA TIDAK MEMAKAI TOMBOL ASLINYA?
 Tombol Windows, Alt+Tab, Alt+F4, Ctrl+Shift+Esc dan Print Screen ditangkap oleh
 Windows di komputer utama sebelum sampai ke LAN Control, sehingga yang terbuka

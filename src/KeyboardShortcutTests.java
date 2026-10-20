@@ -41,6 +41,11 @@ class KeyboardShortcutTests {
             for(int k:new int[]{KeyEvent.VK_E,SHIFT,ALT,CTRL})up(k,0);
             view.escape=()->true;sent.clear();down(KeyEvent.VK_ESCAPE,0);up(KeyEvent.VK_ESCAPE,0);check(sent.isEmpty(),"Escape alone still leaves full screen");
             check(LanControl.COMBO_KEYS.length==LanControl.COMBOS.length&&LanControl.COMBO_HOTKEYS.length==LanControl.COMBOS.length,"every menu entry has a keyboard equivalent");
+            // Focus indicator + Perbesar legend.
+            check(!view.enlarged,"card preview shows no badge by default");
+            check(LanControl.KEY_LEGEND.length>=5,"Perbesar window lists the keyboard shortcuts");
+            LanControl.View big=new LanControl.View(()->frame,x->{}){public boolean hasFocus(){return true;}};big.enlarged=true;big.setSize(640,360);big.displayWidth=640;big.displayHeight=360;big.prepare(frame);
+            BufferedImage canvas=new BufferedImage(640,360,BufferedImage.TYPE_INT_RGB);big.paint(canvas.getGraphics());check(true,"focus badge paints without error");
         });
         System.out.println("PASS: v1.10.0 keyboard shortcuts: Ctrl+Alt+W/D/E/R/S/F4/Esc/P and numpad +, Alt+Page Up/Down task switching, Ctrl+Alt+K release, no double presses, modifiers restored, Escape unchanged.");
     }

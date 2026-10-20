@@ -340,6 +340,8 @@ List<java.awt.Rectangle> changed=null;
         volatile int displayWidth,displayHeight;volatile Prepared prepared;double wheel=0;
         /** Files/folders dropped from Windows Explorer onto the client screen; null disables dropping. */
         java.util.function.Consumer<List<java.nio.file.Path>> drop;volatile boolean dragOver;
+        /** True for the Perbesar window: shows the "keyboard goes to client" badge and a thicker focus frame. */
+        boolean enlarged=false;
         record Prepared(BufferedImage source,int width,int height,BufferedImage scaled) {}
         void prepare(BufferedImage frame){prepare(frame,null);}
         /** Pre-scales the frame for painting; with a list of changed areas only those parts of the previous scaled frame are recomputed. */
@@ -396,12 +398,26 @@ List<java.awt.Rectangle> changed=null;
             double scale=oneToOne?1:Math.min(getWidth()/(double)im.getWidth(),getHeight()/(double)im.getHeight());int w=stretch&&!oneToOne?getWidth():Math.max(1,(int)(im.getWidth()*scale)),h=stretch&&!oneToOne?getHeight():Math.max(1,(int)(im.getHeight()*scale));
             area=new Rectangle(Math.max(0,(getWidth()-w)/2),Math.max(0,(getHeight()-h)/2),w,h);
             g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_BILINEAR);g.setRenderingHint(RenderingHints.KEY_RENDERING,RenderingHints.VALUE_RENDER_QUALITY);
-            Prepared ready=prepared;if(!oneToOne&&ready!=null&&ready.source()==im&&ready.width()==getWidth()&&ready.height()==getHeight())g.drawImage(ready.scaled(),area.x,area.y,w,h,null);else {g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_BILINEAR);g.drawImage(im,area.x,area.y,w,h,null);}if(hasFocus()){g.setColor(Ui.ACCENT);g.drawRect(0,0,getWidth()-1,getHeight()-1);}
+            Prepared ready=prepared;if(!oneToOne&&ready!=null&&ready.source()==im&&ready.width()==getWidth()&&ready.height()==getHeight())g.drawImage(ready.scaled(),area.x,area.y,w,h,null);else {g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_BILINEAR);g.drawImage(im,area.x,area.y,w,h,null);}focusIndicator(g);
             if(dragOver){g.setColor(new Color(8,20,28,190));g.fillRect(0,0,getWidth(),getHeight());g.setColor(Ui.ACCENT);g.setStroke(new BasicStroke(3,BasicStroke.CAP_ROUND,BasicStroke.JOIN_ROUND,1,new float[]{12,9},0));g.drawRoundRect(12,12,getWidth()-25,getHeight()-25,18,18);
                 g.setFont(new Font(Ui.FONT,Font.BOLD,Math.max(15,Math.min(26,getWidth()/30))));String t="Lepas untuk mengirim ke Desktop klien";g.drawString(t,(getWidth()-g.getFontMetrics().stringWidth(t))/2,getHeight()/2);}
             g.dispose();
         }
+        /** AnyDesk-style cue: a frame plus a corner badge telling whether what you type now goes to the client. */
+        void focusIndicator(Graphics2D g){
+            boolean active=hasFocus();
+            if(active){g.setStroke(new BasicStroke(enlarged?3:2));g.setColor(Ui.ACCENT);g.drawRect(1,1,getWidth()-3,getHeight()-3);}
+            else if(enlarged){g.setStroke(new BasicStroke(2));g.setColor(Ui.MUTED);g.drawRect(1,1,getWidth()-3,getHeight()-3);}
+            if(!enlarged)return;
+            String text=active?"⌨  Ketikan & pintasan → klien":"Klik layar untuk mengetik ke klien";
+            g.setFont(new Font(Ui.FONT,Font.BOLD,13));FontMetrics fm=g.getFontMetrics();int pad=9,tw=fm.stringWidth(text),bw=tw+pad*2,bh=fm.getHeight()+8;
+            g.setColor(active?new Color(12,52,47,235):new Color(20,30,42,225));g.fillRoundRect(10,10,bw,bh,12,12);
+            g.setColor(active?Ui.ACCENT:Ui.LINE);g.setStroke(new BasicStroke(1));g.drawRoundRect(10,10,bw,bh,12,12);
+            g.setColor(active?Ui.ACCENT:Ui.MUTED);g.drawString(text,10+pad,10+fm.getAscent()+4);
+        }
     }
+    /** Keyboard equivalents for the keys Windows on the master would otherwise steal, for the legend under the Perbesar window. */
+    static final String[] KEY_LEGEND={"Ctrl+Alt+E → Win+E","Ctrl+Alt+W → Start","Alt+PgUp → Alt+Tab","Ctrl+Alt+F4 → Alt+F4","Ctrl+Alt+Esc → Task Manager","Ctrl+Alt+P → Print Screen","Ctrl+Alt+K → lepas tombol"};
     static class Card extends Ui.RoundPanel {
         int number;JLabel numberLabel;final Controller owner;volatile Peer peer;volatile BufferedImage image;final JTextField ip=new JTextField(14);final JCheckBox selected=new JCheckBox("Pilih");
         final JLabel title,status=Ui.label("Offline",12,true,Ui.MUTED),picture=Ui.label(" ",11,false,Ui.MUTED);final View view;
@@ -661,7 +677,7 @@ List<java.awt.Rectangle> changed=null;
             String label=group?targets.size()+" klien":source.name+"  ("+source.ip.getText().trim()+")";
             JFrame remote=new JFrame(group?"Kontrol serentak — "+label:"Kontrol individual — "+label);remote.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);remote.setMinimumSize(new Dimension(800,550));Icons.apply(remote,Icons.UTAMA);
             Sender sender=sender(targets);
-            View v=new View(()->source.image,sender);v.shortcut=key->{if(key==KeyEvent.VK_C){Peer p=source.peer;if(p!=null)p.shortcut(key);}else for(Card c:targets){Peer p=c.peer;if(p!=null)p.shortcut(key);}};v.drop=items->sendFiles(targets,items,v);source.largeViews.add(v);JScrollPane screen=new JScrollPane(v);screen.getViewport().setBackground(Ui.FIELD);remote.add(screen);
+            View v=new View(()->source.image,sender);v.enlarged=true;v.shortcut=key->{if(key==KeyEvent.VK_C){Peer p=source.peer;if(p!=null)p.shortcut(key);}else for(Card c:targets){Peer p=c.peer;if(p!=null)p.shortcut(key);}};v.drop=items->sendFiles(targets,items,v);source.largeViews.add(v);JScrollPane screen=new JScrollPane(v);screen.getViewport().setBackground(Ui.FIELD);remote.add(screen);
             JPanel bar=Ui.transparent(new Ui.WrapLayout(FlowLayout.LEFT,10,6));bar.add(Ui.label(group?"SERENTAK  /  "+label:"INDIVIDUAL  /  "+label,13,true,Ui.ACCENT));
             JComboBox<String> quality=new JComboBox<>(MODES);quality.setSelectedIndex(Math.max(0,MODE_CODES.indexOf(source.mode)));quality.addActionListener(e->{source.mode=modeCode(quality.getSelectedIndex());source.updateStream();v.requestFocusInWindow();});bar.add(quality);
             JComboBox<String> sizing=new JComboBox<>(new String[]{"Pas jendela","Ukuran asli 1:1","Regangkan"});
@@ -672,7 +688,12 @@ List<java.awt.Rectangle> changed=null;
                 else {remote.dispose();remote.setUndecorated(false);remote.setBounds(previous[0]);remote.setExtendedState(previousState[0]);remote.setVisible(true);fullscreen[0]=false;full.setText("Layar penuh");}v.requestFocusInWindow();source.updateStream();};
             full.addActionListener(e->toggle.run());bar.add(full);v.escape=()->{if(!fullscreen[0])return false;toggle.run();return true;};remote.add(bar,BorderLayout.NORTH);
             remote.getRootPane().registerKeyboardAction(e->{if(fullscreen[0])toggle.run();},KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE,0),JComponent.WHEN_IN_FOCUSED_WINDOW);
-            JLabel info=Ui.label(group?"  Input ke klien yang dipilih saat jendela dibuka. Samakan posisi aplikasi di setiap klien. Tombol khusus: Win, Alt+Tab, Task Manager.":"  Input hanya ke komputer ini. Tarik file/folder ke layar: kirim ke Desktop klien. Ctrl+C / Ctrl+V: teks. Esc: keluar layar penuh. Win, Alt+Tab: Tombol khusus.",12,false,Ui.MUTED);info.setBorder(BorderFactory.createEmptyBorder(10,8,10,8));remote.add(info,BorderLayout.SOUTH);
+            JPanel south=Ui.transparent(new BorderLayout(0,2));
+            JLabel info=Ui.label(group?"  Input ke klien yang dipilih saat jendela dibuka. Samakan posisi aplikasi di setiap klien.":"  Input hanya ke komputer ini. Tarik file/folder ke layar: kirim ke Desktop klien.  Ctrl+C / Ctrl+V: teks.  Esc: keluar layar penuh.",12,false,Ui.MUTED);info.setBorder(BorderFactory.createEmptyBorder(8,8,2,8));
+            JPanel legend=Ui.transparent(new Ui.WrapLayout(FlowLayout.LEFT,14,2));legend.setBorder(BorderFactory.createEmptyBorder(0,6,8,8));
+            JLabel lead=Ui.label("⌨  Pintasan keyboard:",12,true,Ui.ACCENT);lead.setToolTipText("Klik layar klien dulu, lalu tekan salah satu kombinasi ini. Daftar lengkap ada di tombol \"Tombol khusus\".");legend.add(lead);
+            for(String item:KEY_LEGEND)legend.add(Ui.label(item,12,false,Ui.MUTED));
+            south.add(info,BorderLayout.NORTH);south.add(legend,BorderLayout.SOUTH);remote.add(south,BorderLayout.SOUTH);
             remote.addWindowListener(new WindowAdapter(){public void windowClosed(WindowEvent e){later(()->{if(!remote.isDisplayable()){sender.send("RESET");source.largeViews.remove(v);source.updateStream();remotes.remove(remote);}});}});
             remote.setSize(1250,820);remote.setLocationRelativeTo(f);remotes.add(remote);remote.setVisible(true);v.requestFocusInWindow();source.updateStream();
         }
