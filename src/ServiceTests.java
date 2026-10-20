@@ -37,6 +37,7 @@ class ServiceTests {
             ok(task.contains("<LogonTrigger>"),"starts at this user's logon");
             ok(task.contains("javaw.exe</Command>")&&task.contains("client --auto"),"launches the client and auto-shares");
             ok(task.contains("LAN-Control-5.jar"),"points at the installed JAR");
+            ok(task.contains("encoding=\"UTF-16\""),"XML declares UTF-16 (schtasks rejects UTF-8: 'unable to switch the encoding')");
             ok(!LanControl.connectionReason(new EOFException()).contains("null"),"readable EOF error");
             rpcTest(dir);
             System.out.println("PASS: 700 KB chunk upload/download, unicode paths, overwrite rejection, rename/delete/mkdir, cancel/disconnect cleanup, encrypted RPC responses and errors.");

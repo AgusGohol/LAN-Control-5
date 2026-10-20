@@ -117,7 +117,7 @@ class RemoteServices implements AutoCloseable {
         static String xmlEsc(String s){return s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;");}
         /** Task Scheduler XML: runs the client at this user's logon, elevated (HighestAvailable) with no UAC prompt. */
         static String taskXml(Path javaw,Path jar){String acct=xmlEsc(account());return
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"+
+            "<?xml version=\"1.0\" encoding=\"UTF-16\"?>\n"+
             "<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\n"+
             "  <RegistrationInfo><Description>LAN Control 5: klien terbuka sebagai Administrator saat login</Description></RegistrationInfo>\n"+
             "  <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>"+acct+"</UserId></LogonTrigger></Triggers>\n"+
@@ -136,7 +136,9 @@ class RemoteServices implements AutoCloseable {
         }
         static void createAdminTask()throws Exception{
             Path xml=Files.createTempFile("lan5-task-",".xml");
-            try{Files.writeString(xml,taskXml(javaw(),jar()),StandardCharsets.UTF_8);
+            // schtasks /XML requires a UTF-16 file with a byte-order mark; UTF-8 fails with
+            // "unable to switch the encoding". Java's UTF_16LE writes no BOM, so prepend it.
+            try{Files.write(xml,("﻿"+taskXml(javaw(),jar())).getBytes(StandardCharsets.UTF_16LE));
                 String[] r=runSchtasks("/Create","/TN",taskName(),"/XML",xml.toString(),"/F");
                 if(!"0".equals(r[0]))throw new IOException("Tidak bisa membuat tugas Administrator"+(r[1].isEmpty()?" (schtasks kode "+r[0]+")":": "+firstLines(r[1])));
             }finally{try{Files.deleteIfExists(xml);}catch(Exception ignored){}}
