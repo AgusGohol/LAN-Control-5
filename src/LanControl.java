@@ -17,7 +17,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LanControl {
-    static final String VERSION="1.12.10",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
+    static final String VERSION="1.12.11",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
     static final int PORT=45851, MAX=8*1024*1024;
     static volatile boolean justUpdated;
     static final Color BG=Ui.BG, PANEL=Ui.SURFACE, TEXT=Ui.TEXT;
@@ -180,7 +180,7 @@ public class LanControl {
             body.add(actions);
             JPanel bottom=Ui.transparent(new GridLayout(0,1,0,9));status.setForeground(Ui.ACCENT);bottom.add(status);bottom.add(Ui.label("Resolusi mengikuti jendela kontrol. Kualitas dapat dipilih di komputer utama.",12,false,Ui.MUTED));body.add(bottom,BorderLayout.SOUTH);
             root.add(body);JPanel foot=Ui.transparent(new BorderLayout(10,0));foot.add(Ui.label("Biarkan klien terbuka  /  Port TCP "+PORT+"  /  Tombol hentikan selalu tersedia",12,false,Ui.MUTED));JPanel themeRow=Ui.transparent(new FlowLayout(FlowLayout.RIGHT,0,0));themeRow.add(Ui.themeToggle());foot.add(themeRow,BorderLayout.EAST);root.add(foot,BorderLayout.SOUTH);
-            Icons.apply(f,Icons.KLIEN);f.add(root);f.setSize(900,720);f.setLocationRelativeTo(null);f.setVisible(!automatic);
+            Icons.apply(f,Icons.KLIEN);f.add(root);f.setSize(900,720);f.setLocationRelativeTo(null);f.setVisible(true);
             WORK.submit(()->Icons.ensure(Icons.KLIEN,()->{try{return RemoteServices.Startup.isAdmin()?"--request-admin":"client";}catch(Exception e){return "client";}}));
             if(resume&&!automatic)WORK.submit(()->{try{Properties saved=Updater.takeResume();String code=saved==null?null:Updater.code(saved);
                     if(code!=null){later(()->{password.setText(code);start();status.setText((justUpdated?"Diperbarui ke v"+VERSION:"Berjalan kembali")+"  /  Menunggu kontrol utama...");});
@@ -189,7 +189,7 @@ public class LanControl {
                 catch(Exception e){error(f,new Exception("Isi kode lagi lalu klik Mulai berbagi: "+message(e)));}});
             if(automatic)WORK.submit(()->{try{
                     // Single instance: when Administrator mode is set up, the elevated task's instance must be the only one.
-                    boolean elevated=RemoteServices.Startup.isAdmin();boolean adminTask=false;try{adminTask=RemoteServices.Startup.taskActive();}catch(Exception ignored){}
+                    boolean elevated=RemoteServices.Startup.isAdmin();admin=elevated;boolean adminTask=false;try{adminTask=RemoteServices.Startup.taskActive();}catch(Exception ignored){}
                     if(adminTask){
                         if(elevated)RemoteServices.Startup.removeLoginLaunchers();   // clean any leftover non-admin launcher so it can't double-open
                         else try{Thread.sleep(1600);}catch(InterruptedException ignored){}   // let the elevated instance grab the port first, then stand down
@@ -227,8 +227,13 @@ public class LanControl {
                     catch(BindException e){if(i+1<tries)try{Thread.sleep(600);}catch(InterruptedException ignored){}}
                     catch(Exception e){active=false;later(()->{password.setEnabled(true);status.setText("Berbagi dihentikan");error(f,e);});return;}}
                 if(bound==null){
-                    if(automatic){later(()->System.exit(0));return;}
-                    active=false;later(()->{password.setEnabled(true);status.setText("Berbagi dihentikan");error(f,new Exception("Port "+PORT+" sudah dipakai. Kemungkinan klien LAN Control lain sudah berjalan di komputer ini (misalnya dari startup otomatis). Tutup klien lain tersebut atau gunakan jendela yang sudah terbuka."));});return;}
+                    active=false;
+                    // A redundant NON-admin auto-start stands down quietly so only one client runs. The elevated instance never
+                    // exits itself: it stays visible and just reports the situation, so the app is never invisible.
+                    if(automatic&&!Boolean.TRUE.equals(admin)){later(()->System.exit(0));return;}
+                    later(()->{password.setEnabled(true);status.setText("Klien lain sudah berjalan di komputer ini — jendela ini boleh ditutup.");
+                        if(!automatic)error(f,new Exception("Port "+PORT+" sudah dipakai. Kemungkinan klien LAN Control lain sudah berjalan di komputer ini (misalnya dari startup otomatis). Tutup klien lain tersebut atau gunakan jendela yang sudah terbuka."));});
+                    return;}
                 listener=bound;final ServerSocket server=bound;
                 later(()->{if(!f.isVisible())f.setVisible(true);status.setText("Menunggu kontrol utama...");});
                 try{Input input=new Input();serve(server,pass,()->active,(s,w)->session(s,w,input));}
