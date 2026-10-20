@@ -127,21 +127,27 @@ class RemoteServices implements AutoCloseable {
         static Path shortcut(){return Path.of(System.getenv("APPDATA"),"Microsoft","Windows","Start Menu","Programs","Startup","LAN Control 5 Klien.lnk");}
         static String literal(String s){return "'"+s.replace("'","''")+"'";}
         static String powershell(String script,String input)throws Exception{return powershell(script,input,20);}
-        static String powershell(String script,String input,int timeout)throws Exception{
+        // Default calls (shortcut, scheduled task, queries) carry no secret, so a failure reports the real Windows reason.
+        static String powershell(String script,String input,int timeout)throws Exception{return powershell(script,input,timeout,true);}
+        // hidden=true suppresses stderr for calls whose input is the connection code (DPAPI), so the secret never reaches a dialog.
+        static String powershell(String script,String input,int timeout,boolean showReason)throws Exception{
             windows();String encoded=Base64.getEncoder().encodeToString(("$ErrorActionPreference='Stop';"+script).getBytes(StandardCharsets.UTF_16LE));
             Process p=new ProcessBuilder("powershell.exe","-NoProfile","-NonInteractive","-EncodedCommand",encoded).start();
             try(OutputStream out=p.getOutputStream()){out.write(input.getBytes(StandardCharsets.UTF_8));}
-            // Bound execution and drain both pipes without displaying secret-bearing error text.
             var stdout=LanControl.WORK.submit(()->p.getInputStream().readAllBytes());
             var stderr=LanControl.WORK.submit(()->p.getErrorStream().readAllBytes());
             if(!p.waitFor(timeout,TimeUnit.SECONDS)){p.destroyForcibly();throw new IOException("Pengaturan Windows melewati batas waktu.");}
-            byte[] result=stdout.get(5,TimeUnit.SECONDS);stderr.get(5,TimeUnit.SECONDS);
-            if(p.exitValue()!=0)throw new IOException("Pengaturan Windows gagal. Pastikan PowerShell tersedia dan folder aplikasi dapat diakses.");
+            byte[] result=stdout.get(5,TimeUnit.SECONDS);byte[] errBytes=stderr.get(5,TimeUnit.SECONDS);
+            if(p.exitValue()!=0){String reason=showReason?firstLines(new String(errBytes,StandardCharsets.UTF_8)):"";
+                throw new IOException("Pengaturan Windows gagal."+(reason.isEmpty()?" Pastikan PowerShell tersedia dan folder aplikasi dapat diakses.":" "+reason));}
             return new String(result,StandardCharsets.UTF_8).trim();
         }
+        /** First meaningful lines of a PowerShell error, trimmed for a readable dialog. */
+        static String firstLines(String text){StringBuilder s=new StringBuilder();for(String line:text.split("\\R")){String t=line.strip();if(t.isEmpty()||t.startsWith("At line:")||t.startsWith("+"))continue;if(s.length()>0)s.append(" ");s.append(t);if(s.length()>300)break;}
+            String out=s.toString();return out.length()>300?out.substring(0,300)+"...":out;}
         static String protect(String password,boolean encrypt)throws Exception {
             String script="Add-Type -AssemblyName System.Security;$b=[Convert]::FromBase64String([Console]::In.ReadToEnd());$r=[Security.Cryptography.ProtectedData]::"+(encrypt?"Protect":"Unprotect")+"($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser);[Console]::Write([Convert]::ToBase64String($r))";
-            return powershell(script,password);
+            return powershell(script,password,20,false);
         }
         /** Saves only the connection code (Windows DPAPI, this account) — no auto-start. Used by the "Ingat kode" option. */
         static void saveCode(String password)throws Exception {
