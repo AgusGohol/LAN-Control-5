@@ -17,6 +17,26 @@ class SecureDesktop {
     private static volatile long latestAt;
     private static volatile boolean running;
     private static Thread worker;
+    private static volatile OutputStream out;      // saluran kirim input ke helper (4b)
+    private static volatile int lastAx, lastAy;    // posisi mouse absolut terakhir (0..65535)
+
+    /** Apakah secure desktop sedang aktif (frame UAC tersedia). Dipakai klien untuk mengarahkan input. */
+    static boolean active() { return current() != null; }
+
+    private static int norm(double n) { if (n < 0) n = 0; if (n > 1) n = 1; return (int) (n * 65535); }
+    /** Gerakkan kursor ke posisi ternormalisasi (0..1) di secure desktop. */
+    static void move(double nx, double ny) { int ax = norm(nx), ay = norm(ny); lastAx = ax; lastAy = ay; send(mouse(ax, ay, (byte) 0)); }
+    /** Tekan/lepas tombol kiri di posisi terakhir. */
+    static void button(boolean down) { send(mouse(lastAx, lastAy, (byte) (down ? 1 : 2))); }
+    private static byte[] mouse(int ax, int ay, byte action) {
+        return new byte[]{1, (byte) ax, (byte) (ax >> 8), (byte) (ax >> 16), (byte) (ax >> 24),
+                (byte) ay, (byte) (ay >> 8), (byte) (ay >> 16), (byte) (ay >> 24), action};
+    }
+    private static synchronized void send(byte[] b) {
+        OutputStream o = out;
+        if (o == null) return;
+        try { o.write(b); o.flush(); } catch (Exception ignored) {}
+    }
 
     /** Frame secure desktop terkini bila UAC sedang aktif & frame masih baru; selain itu null. */
     static BufferedImage current() {
@@ -80,6 +100,7 @@ class SecureDesktop {
 
     private static void stream(Socket s) {
         try (Socket sock = s) {
+            out = sock.getOutputStream();
             DataInputStream in = new DataInputStream(new BufferedInputStream(sock.getInputStream()));
             while (running) {
                 int nameLen = readIntLE(in);
@@ -99,6 +120,7 @@ class SecureDesktop {
                 }
             }
         } catch (Exception ignored) {}
+        finally { out = null; }
     }
 
     /** 32-bit little-endian, sesuai C# BitConverter di Windows. */

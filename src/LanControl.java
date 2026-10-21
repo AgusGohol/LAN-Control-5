@@ -17,7 +17,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LanControl {
-    static final String VERSION="1.13.0",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
+    static final String VERSION="1.13.1",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
     static final int PORT=45971, MAX=8*1024*1024;
     static volatile boolean justUpdated;
     static final Color BG=Ui.BG, PANEL=Ui.SURFACE, TEXT=Ui.TEXT;
@@ -128,6 +128,15 @@ public class LanControl {
         synchronized void apply(String msg,Hands h){
             try{
                 String[] p=msg.split(" ");
+                if(SecureDesktop.active()){   // UAC/secure desktop aktif: arahkan klik ke helper SYSTEM (4b)
+                    switch(p[0]){
+                        case "MOVE":double mx=Double.parseDouble(p[1]),my=Double.parseDouble(p[2]);if(Double.isFinite(mx)&&Double.isFinite(my))SecureDesktop.move(mx,my);return;
+                        case "DOWN":if("1024".equals(p[1]))SecureDesktop.button(true);return;
+                        case "UP":if("1024".equals(p[1]))SecureDesktop.button(false);return;
+                        case "RESET":SecureDesktop.button(false);return;
+                        default:return;   // keyboard/wheel diabaikan saat secure desktop (fokus klik Yes/No)
+                    }
+                }
                 switch(p[0]){
                     case "MOVE":double x=Double.parseDouble(p[1]),y=Double.parseDouble(p[2]);if(!Double.isFinite(x)||!Double.isFinite(y))return;
                         Rectangle bounds=currentBounds();robot.mouseMove(bounds.x+(int)(Math.max(0,Math.min(1,x))*(bounds.width-1)),bounds.y+(int)(Math.max(0,Math.min(1,y))*(bounds.height-1)));break;
