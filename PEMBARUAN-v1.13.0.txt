@@ -1,0 +1,24 @@
+LAN CONTROL 5 v1.13.0 - MELIHAT & MENGEKLIK LAYAR UAC KLIEN DARI UTAMA
+
+Sejak v1.12.8 klien bisa terbuka sebagai Administrator agar komputer utama punya
+kontrol penuh. Namun masih ada satu kasus: bila di klien muncul jendela UAC "Do you
+want to allow..." (misalnya saat menjalankan aplikasi dengan Run as administrator),
+jendela itu tampil di desktop aman (secure desktop) Windows - layar komputer utama
+menjadi hitam dan klik tidak sampai.
+
+Versi ini mengatasinya. Saat UAC/secure desktop aktif di klien, komputer utama kini
+dapat MELIHAT jendela UAC tersebut dan MENGEKLIK Yes/No dari jarak jauh, mirip
+aplikasi remote komersial. Bila fitur belum tersedia atau klien bukan Administrator,
+perilakunya kembali persis seperti versi sebelumnya (tidak ada yang berubah).
+
+- Komputer utama menampilkan layar UAC klien, bukan lagi layar hitam.
+- Tombol Yes/No pada UAC bisa ditekan dari komputer utama.
+- Komponen pendukungnya dikirim otomatis dari komputer utama ke klien lewat koneksi
+  LAN terenkripsi saat tersambung - tidak perlu dipasang manual di tiap klien.
+  (Cukup disiapkan sekali di komputer utama.)
+- Fitur hanya aktif pada klien yang berjalan sebagai Administrator; di luar itu
+  aplikasi berjalan normal seperti biasa.
+
+Catatan: fitur ini tidak mengubah cara kerja berbagi layar biasa maupun transfer
+file. Keamanan tetap: hanya komputer utama yang sudah terhubung dengan kode koneksi
+yang benar yang dapat mengontrol klien.
