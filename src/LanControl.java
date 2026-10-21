@@ -414,7 +414,7 @@ List<java.awt.Rectangle> changed=null;
                 public void mouseMoved(MouseEvent e){if(hasFocus())move(e);}public void mouseDragged(MouseEvent e){move(e);}
                 // Touchpads report fractional rotation (getWheelRotation()==0); accumulate until a whole notch is reached.
                 public void mouseWheelMoved(MouseWheelEvent e){
-                    if(!enlarged){   // thumbnail dashboard: scroll menggulir halaman, bukan mengontrol klien
+                    if(!enlarged&&!hasFocus()){   // thumbnail tak terfokus: scroll menggulir halaman. Hanya kartu terfokus (bingkai biru) yang scroll-nya ke klien.
                         Container c=getParent();while(c!=null&&!(c instanceof JScrollPane))c=c.getParent();
                         if(c instanceof JScrollPane sp){JScrollBar bar=sp.getVerticalScrollBar();bar.setValue(bar.getValue()+(int)Math.round(e.getPreciseWheelRotation()*Math.max(1,bar.getUnitIncrement())*3));}
                         return;

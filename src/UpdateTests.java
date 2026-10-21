@@ -21,7 +21,7 @@ class UpdateTests {
         SwingUtilities.invokeAndWait(()->{
             List<String> sent=new ArrayList<>();BufferedImage frame=new BufferedImage(1600,900,BufferedImage.TYPE_INT_RGB);
             LanControl.View v=new LanControl.View(()->frame,sent::add);v.setSize(800,600);v.paint(new BufferedImage(800,600,BufferedImage.TYPE_INT_RGB).getGraphics());
-            // Thumbnail dashboard (enlarged=false, tanpa JScrollPane induk): roda menggulir halaman, tidak dikirim ke klien.
+            // Thumbnail dashboard tak terfokus (enlarged=false, hasFocus=false, tanpa JScrollPane induk): roda menggulir halaman, tidak dikirim ke klien.
             for(int i=0;i<4;i++)v.dispatchEvent(new MouseWheelEvent(v,MouseEvent.MOUSE_WHEEL,0,0,400,300,400,300,0,false,MouseWheelEvent.WHEEL_UNIT_SCROLL,3,0,0.25));
             check(sent.isEmpty(),"roda di thumbnail dashboard menggulir halaman, bukan mengontrol klien: "+sent);sent.clear();
             v.enlarged=true;   // jendela Perbesar: roda mengontrol klien, dengan akumulasi touchpad
