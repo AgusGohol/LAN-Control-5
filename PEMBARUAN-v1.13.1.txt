@@ -1,0 +1,14 @@
+LAN CONTROL 5 v1.13.1 - TAMPILAN DASHBOARD LEBIH LEGA
+
+Perbaikan tampilan Ruang Kontrol di komputer utama. Tidak mengubah cara kerja,
+keamanan, maupun fitur klien.
+
+- Preview tiap klien kini lebih besar dan MENGISI PENUH lebar kartu (tanpa bar
+  kosong di kiri-kanan), menampilkan layar klien secara utuh.
+- Header dashboard diringkas (judul lebih ringkas, jarak dipadatkan) sehingga
+  kartu klien mendapat ruang lebih banyak dan tidak terpotong.
+- Menggulir (scroll) di atas preview kini MENGGULIR HALAMAN. Roda mouse hanya
+  mengontrol klien pada kartu yang sedang difokuskan - klik kartunya dulu
+  (muncul bingkai biru), lalu scroll di situ masuk ke klien.
+
+Catatan: fitur lihat & klik UAC (v1.13.0) tetap berjalan seperti biasa.
