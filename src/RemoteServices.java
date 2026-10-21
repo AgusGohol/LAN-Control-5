@@ -32,6 +32,10 @@ class RemoteServices implements AutoCloseable {
         Path d=Path.of(System.getProperty("user.home"),"Desktop");return Files.isDirectory(d)?d:Path.of(System.getProperty("user.home"));
     }
     static void windows()throws IOException{if(!System.getProperty("os.name").toLowerCase().contains("win"))throw new IOException("Fitur ini memerlukan Windows.");}
+    /** Helper SYSTEM secure-desktop berada di samping JAR (sdhelper.exe), dikelola lewat Opsi 2 (utama mendorong ke klien). */
+    static Path sdhelperPath()throws Exception{return Startup.jar().getParent().resolve("sdhelper.exe");}
+    static String sha256hex(byte[] b)throws Exception{byte[] h=java.security.MessageDigest.getInstance("SHA-256").digest(b);StringBuilder sb=new StringBuilder(64);for(byte x:h)sb.append(Character.forDigit((x>>4)&0xF,16)).append(Character.forDigit(x&0xF,16));return sb.toString();}
+    static String sdhelperHash(){try{Path p=sdhelperPath();if(!Files.isRegularFile(p))return "";return sha256hex(Files.readAllBytes(p));}catch(Exception e){return "";}}
     /** Synchronized: file RPCs run on a worker thread while close() may run on the session thread. */
     synchronized byte[] execute(String op,List<String> a)throws Exception {
         switch(op){
@@ -63,6 +67,22 @@ class RemoteServices implements AutoCloseable {
             }
             case "PUT_CANCEL": {Upload u=uploads.remove(a.get(0));if(u!=null){u.output.close();Files.deleteIfExists(u.temporary);}return text("Dibatalkan");}
             case "VERSION":return text(LanControl.VERSION);
+            case "SDHELPER_HASH":return text(sdhelperHash());   // Opsi 2: utama cek apakah klien sudah punya helper yang sama
+            case "SDHELPER_SET": {                              // Opsi 2: utama kirim sdhelper.exe ke klien lewat LAN terenkripsi
+                byte[] bytes=Base64.getDecoder().decode(a.get(0));
+                if(bytes.length<1||bytes.length>50*1024*1024)throw new IOException("Ukuran komponen tidak wajar.");
+                Path target=sdhelperPath();Files.createDirectories(target.getParent());
+                Path tmp=Files.createTempFile(target.getParent(),".sdh-",".part");
+                Files.write(tmp,bytes);
+                try{
+                    if(Files.exists(target)){   // exe yang sedang berjalan tidak bisa ditimpa, tapi boleh digeser dulu
+                        Path old=target.resolveSibling("sdhelper.exe.old");try{Files.deleteIfExists(old);}catch(Exception ignored){}
+                        try{Files.move(target,old);}catch(Exception stillRunning){/* biarkan; coba timpa langsung di bawah */}
+                    }
+                    try{Files.move(tmp,target,StandardCopyOption.ATOMIC_MOVE);}catch(Exception e){Files.move(tmp,target,StandardCopyOption.REPLACE_EXISTING);}
+                }finally{Files.deleteIfExists(tmp);}
+                return text("OK");
+            }
             case "DESKTOP":return text(desktop().toString());
             case "PRIVILEGE":return text(privilege);
             case "HOSTNAME":return text(hostName());

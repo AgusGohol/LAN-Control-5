@@ -542,7 +542,7 @@ List<java.awt.Rectangle> changed=null;
             if(host.isEmpty()||pass.length()<12){wanted=false;if(!silent)error(owner.f,new Exception("Isi IP klien dan kode minimal 12 karakter."));else {status.setText("Isi IP dan kode");status.setForeground(Ui.WARN);}return;}
             connecting=true;status.setText("Menghubungkan...");status.setForeground(Ui.ACCENT);int port=owner.port;
             WORK.submit(()->{try{Wire w=dial(host,port,pass,5000);Peer p=new Peer(w,this);
-                    later(()->{connecting=false;if(!wanted){p.close();status.setText("Offline");status.setForeground(Ui.MUTED);return;}peer=p;attempts=0;note=null;expectRestart=false;privilege=null;this.host=host;showOnline();p.start();updateStream();owner.save();owner.checkVersion(this,p,host);owner.checkPrivilege(this,p);owner.checkName(this,p);owner.checkControllers(this,p);});}
+                    later(()->{connecting=false;if(!wanted){p.close();status.setText("Offline");status.setForeground(Ui.MUTED);return;}peer=p;attempts=0;note=null;expectRestart=false;privilege=null;this.host=host;showOnline();p.start();updateStream();owner.save();owner.checkVersion(this,p,host);owner.checkPrivilege(this,p);owner.checkName(this,p);owner.checkControllers(this,p);owner.syncHelper(this,p);});}
                 catch(Exception e){String reason=connectionReason(e);boolean fatal=e instanceof BadCodeException;
                     later(()->{connecting=false;if(!wanted)return;
                         if(retryOnFail&&!fatal&&(owner.reconnect.isSelected()||expectRestart)){scheduleRetry(reason);return;}
@@ -613,6 +613,21 @@ List<java.awt.Rectangle> changed=null;
                     String now=found;later(()->{if(card.peer!=p||now.equals(card.others))return;boolean joined=!now.isEmpty()&&(card.others.isEmpty()||now.split("\n").length>card.others.split("\n").length);card.others=now;card.showOnline();
                         if(joined)card.notice("Komputer utama lain juga mengontrol klien ini: "+now.replace("\n",", ")+". Kursor dipakai bersama, bergantianlah.");});
                     try{Thread.sleep(3000);}catch(InterruptedException e){return;}}});}
+        /** Opsi 2: begitu klien tersambung, kirim sdhelper.exe milik utama bila klien belum punya atau berbeda. Diam bila utama tak punya helper. */
+        void syncHelper(Card card,Peer p){
+            WORK.submit(()->{
+                byte[] bytes;
+                try{java.nio.file.Path local=RemoteServices.Startup.jar().getParent().resolve("sdhelper.exe");if(!java.nio.file.Files.isRegularFile(local))return;bytes=java.nio.file.Files.readAllBytes(local);}
+                catch(Exception noHelper){return;}   // utama belum menyiapkan helper: lewati tanpa gangguan
+                try{
+                    String localHash=RemoteServices.sha256hex(bytes);
+                    String clientHash=string(p.rpc("SDHELPER_HASH")).trim();
+                    if(localHash.equalsIgnoreCase(clientHash))return;   // klien sudah punya helper yang sama
+                    p.rpc("SDHELPER_SET",java.util.Base64.getEncoder().encodeToString(bytes));
+                    if(card.peer==p)later(()->card.notice("Komponen secure-desktop dikirim ke klien (fitur lihat & klik UAC siap)."));
+                }catch(Exception e){/* klien versi lama (operasi tidak dikenal) atau tak bisa menulis: abaikan */}
+            });
+        }
         void checkName(Card card,Peer p){
             if(!card.defaultName())return;
             WORK.submit(()->{String host;try{host=Card.cleanName(string(p.rpc("HOSTNAME")));}catch(Exception e){return;}
