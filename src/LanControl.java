@@ -17,7 +17,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LanControl {
-    static final String VERSION="1.12.11",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
+    static final String VERSION="1.12.12",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
     static final int PORT=45851, MAX=8*1024*1024;
     static volatile boolean justUpdated;
     static final Color BG=Ui.BG, PANEL=Ui.SURFACE, TEXT=Ui.TEXT;

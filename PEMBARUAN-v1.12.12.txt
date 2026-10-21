@@ -1,0 +1,7 @@
+LAN CONTROL 5 v1.12.12 - SCROLLBAR MENGIKUTI TEMA
+
+Perbaikan kecil tampilan. Sebelumnya batang gulir (scrollbar) masih memakai gaya
+bawaan Windows (terang) sehingga tidak menyatu dengan tema biru gelap/terang.
+
+- Scrollbar kini ramping, membulat, dan warnanya mengikuti tema (gelap maupun
+  terang), tanpa tombol panah. Ikut berganti otomatis saat tema diubah.

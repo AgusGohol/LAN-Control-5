@@ -38,7 +38,8 @@ class Ui {
         UIManager.put("CheckBox.icon",new Icon(){public int getIconWidth(){return 17;}public int getIconHeight(){return 17;}public void paintIcon(Component c,Graphics g,int x,int y){Graphics2D a=(Graphics2D)g.create();a.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);boolean selected=c instanceof AbstractButton b&&b.isSelected();a.setColor(selected?ACCENT:FIELD);a.fillRoundRect(x+1,y+1,14,14,5,5);a.setColor(selected?ACCENT:LINE);a.drawRoundRect(x+1,y+1,14,14,5,5);if(selected){a.setColor(ON_ACCENT);a.setStroke(new BasicStroke(2));a.drawLine(x+4,y+8,x+7,y+11);a.drawLine(x+7,y+11,x+12,y+5);}a.dispose();}});
         UIManager.put("TextField.border",new CompoundBorder(new LineBorder(LINE,1,true),new EmptyBorder(8,10,8,10)));
         UIManager.put("PasswordField.border",UIManager.get("TextField.border"));
-        UIManager.put("ScrollPane.border",new EmptyBorder(0,0,0,0));UIManager.put("ScrollBar.width",10);
+        UIManager.put("ScrollPane.border",new EmptyBorder(0,0,0,0));UIManager.put("ScrollBar.width",11);
+        UIManager.put("ScrollBarUI",ThemeScrollBarUI.class.getName());UIManager.put("ScrollBar.background",BG);UIManager.put("ScrollPane.background",BG);
         for(String key:new String[]{"PopupMenu","MenuItem"}){UIManager.put(key+".background",SURFACE);UIManager.put(key+".foreground",TEXT);UIManager.put(key+".font",new Font(FONT,Font.PLAIN,14));}
         UIManager.put("PopupMenu.border",new LineBorder(LINE,1));UIManager.put("MenuItem.selectionBackground",SELECT);UIManager.put("MenuItem.selectionForeground",TEXT);UIManager.put("MenuItem.disabledForeground",MUTED);UIManager.put("Separator.foreground",LINE);
         UIManager.put("ProgressBar.foreground",ACCENT);UIManager.put("ProgressBar.background",FIELD);UIManager.put("ProgressBar.selectionForeground",BG);UIManager.put("ProgressBar.selectionBackground",TEXT);UIManager.put("ProgressBar.font",new Font(FONT,Font.BOLD,13));
@@ -66,6 +67,8 @@ class Ui {
         Color b=c.getBackground();if(b!=null){Color n=map.get(b.getRGB());if(n!=null)c.setBackground(n);}
         if(c instanceof Container box)for(Component k:box.getComponents())remap(k,map);
     }
+    /** Linear blend of two colors (t=0 -> a, t=1 -> b). Used for subtle theme-following shades like the scrollbar thumb. */
+    static Color mix(Color a,Color b,double t){return new Color((int)Math.round(a.getRed()+(b.getRed()-a.getRed())*t),(int)Math.round(a.getGreen()+(b.getGreen()-a.getGreen())*t),(int)Math.round(a.getBlue()+(b.getBlue()-a.getBlue())*t));}
     static boolean savedDark(){return !"light".equals(Settings.load(Settings.file("ui.properties")).getProperty("theme"));}
     static void saveDark(boolean d){try{java.util.Properties p=new java.util.Properties();p.setProperty("theme",d?"dark":"light");Settings.save(Settings.file("ui.properties"),p);}catch(java.io.IOException ignored){}}
     /** A toggle button that flips the theme live and keeps its own label in sync. */
