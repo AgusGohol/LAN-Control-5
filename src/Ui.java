@@ -116,7 +116,7 @@ class Ui {
         boolean connected(Component child){return child instanceof LanControl.Card card&&(card.peer!=null||card.image!=null||card.retry!=null);}
         Component focused(){if(!focusEnabled)return null;if(preferredFocus!=null&&connected(preferredFocus))return preferredFocus;if(layoutFocus!=null&&connected(layoutFocus))return layoutFocus;for(Component child:getComponents())if(connected(child))return child;return null;}
 
-        static final int GAP=16,SIDE_SLOT=250,ROW=370,FOCUS_NARROW=560;
+        static final int GAP=16,SIDE_SLOT=250,ROW=540,FOCUS_NARROW=560;
         /** Any number of computers: 1 column on narrow windows, 2 normally, 3 on wide windows with more than 4 computers. */
         int columns(){int width=getParent()==null?getWidth():getParent().getWidth(),n=getComponentCount();if(width<1150)return 1;return n<=4||width<1700?2:3;}
         int available(){return getParent()==null?Math.max(getHeight(),740):getParent().getHeight();}
