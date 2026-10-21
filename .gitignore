@@ -7,3 +7,9 @@ KUNCI-RILIS-JANGAN-DIBAGIKAN/
 *.key
 preview-*.png
 /ikon/
+
+# Komponen SYSTEM secure-desktop (helper + probe) - TIDAK didistribusikan via repo publik.
+# Hanya kode Java (SecureDesktop.java) yang masuk repo; sdhelper.cs/exe dikirim master->klien lewat LAN.
+uji-secure-desktop/
+sdhelper.exe
+sdhelper.exe.old
