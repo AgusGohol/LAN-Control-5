@@ -455,13 +455,10 @@ List<java.awt.Rectangle> changed=null;
             if(im==null){area=new Rectangle();int cx=getWidth()/2,cy=getHeight()/2;
                 g.setColor(Ui.LINE);g.setStroke(new BasicStroke(2));g.drawRoundRect(cx-24,cy-42,48,32,7,7);g.drawLine(cx,cy-10,cx,cy-2);g.drawLine(cx-12,cy-2,cx+12,cy-2);
                 g.setColor(Ui.MUTED);g.setFont(new Font(Ui.FONT,Font.PLAIN,13));String t="Siap dihubungkan";g.drawString(t,cx-g.getFontMetrics().stringWidth(t)/2,cy+25);g.dispose();return;}
-            boolean fill=!oneToOne&&!stretch&&!enlarged;   // thumbnail dashboard: isi penuh lebar kartu; bila gambar lebih tinggi, potong bagian ATAS (tampilkan bawah)
-            double scale=oneToOne?1:(fill?getWidth()/(double)im.getWidth():Math.min(getWidth()/(double)im.getWidth(),getHeight()/(double)im.getHeight()));
-            int w=stretch&&!oneToOne?getWidth():Math.max(1,(int)(im.getWidth()*scale)),h=stretch&&!oneToOne?getHeight():Math.max(1,(int)(im.getHeight()*scale));
-            int ax=fill?0:Math.max(0,(getWidth()-w)/2),ay=(fill&&h>getHeight())?getHeight()-h:Math.max(0,(getHeight()-h)/2);
-            area=new Rectangle(ax,ay,w,h);
+            double scale=oneToOne?1:Math.min(getWidth()/(double)im.getWidth(),getHeight()/(double)im.getHeight());int w=stretch&&!oneToOne?getWidth():Math.max(1,(int)(im.getWidth()*scale)),h=stretch&&!oneToOne?getHeight():Math.max(1,(int)(im.getHeight()*scale));
+            area=new Rectangle(Math.max(0,(getWidth()-w)/2),Math.max(0,(getHeight()-h)/2),w,h);
             g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_BILINEAR);g.setRenderingHint(RenderingHints.KEY_RENDERING,RenderingHints.VALUE_RENDER_QUALITY);
-            Prepared ready=prepared;if(!fill&&!oneToOne&&ready!=null&&ready.source()==im&&ready.width()==getWidth()&&ready.height()==getHeight())g.drawImage(ready.scaled(),area.x,area.y,w,h,null);else {g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_BILINEAR);g.drawImage(im,area.x,area.y,w,h,null);}focusIndicator(g);
+            Prepared ready=prepared;if(!oneToOne&&ready!=null&&ready.source()==im&&ready.width()==getWidth()&&ready.height()==getHeight())g.drawImage(ready.scaled(),area.x,area.y,w,h,null);else {g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_BILINEAR);g.drawImage(im,area.x,area.y,w,h,null);}focusIndicator(g);
             if(dragOver){g.setColor(new Color(Ui.BG.getRed(),Ui.BG.getGreen(),Ui.BG.getBlue(),190));g.fillRect(0,0,getWidth(),getHeight());g.setColor(Ui.ACCENT);g.setStroke(new BasicStroke(3,BasicStroke.CAP_ROUND,BasicStroke.JOIN_ROUND,1,new float[]{12,9},0));g.drawRoundRect(12,12,getWidth()-25,getHeight()-25,18,18);
                 g.setFont(new Font(Ui.FONT,Font.BOLD,Math.max(15,Math.min(26,getWidth()/30))));String t="Lepas untuk mengirim ke Desktop klien";g.drawString(t,(getWidth()-g.getFontMetrics().stringWidth(t))/2,getHeight()/2);}
             g.dispose();
@@ -587,8 +584,8 @@ List<java.awt.Rectangle> changed=null;
         Path settingsFile=Settings.file("controller.properties");volatile String protectedCode;String protectedPlain;long alerted;
         Controller(){this(false);}
         Controller(boolean preview){this.preview=preview;
-            f=preview?null:window("LAN Control 5 v"+VERSION+" — Kontrol Utama");dashboard.setBorder(BorderFactory.createEmptyBorder(16,22,12,22));
-            JPanel heading=Ui.transparent(new BorderLayout());JPanel words=Ui.transparent(new GridLayout(0,1,0,6));words.add(Ui.label("LAN CONTROL 5  /  v"+VERSION,12,true,Ui.ACCENT));words.add(Ui.label("Ruang kontrol",29,true,Ui.TEXT));words.add(Ui.label("Semua komputer, satu tempat. Pilih klien untuk bekerja bersama.",13,false,Ui.MUTED));heading.add(words);heading.add(count,BorderLayout.EAST);
+            f=preview?null:window("LAN Control 5 v"+VERSION+" — Kontrol Utama");dashboard.setBorder(BorderFactory.createEmptyBorder(8,22,8,22));
+            JPanel heading=Ui.transparent(new BorderLayout());JPanel words=Ui.transparent(new GridLayout(0,1,0,1));words.add(Ui.label("LAN CONTROL 5  /  v"+VERSION,12,true,Ui.ACCENT));words.add(Ui.label("Ruang kontrol",19,true,Ui.TEXT));heading.add(words);heading.add(count,BorderLayout.EAST);
             Ui.RoundPanel toolbar=new Ui.RoundPanel(new BorderLayout(18,4));toolbar.setBorder(BorderFactory.createEmptyBorder(8,10,8,10));
             JPanel access=Ui.transparent(new Ui.WrapLayout(FlowLayout.LEFT,8,5));access.add(Ui.label("Kode koneksi",12,true,Ui.MUTED));password.setPreferredSize(new Dimension(180,36));access.add(password);
             remember.setOpaque(false);remember.setToolTipText("Simpan kode terenkripsi (Windows DPAPI) agar klien tersambung otomatis saat aplikasi dibuka");remember.addActionListener(e->rememberCode());access.add(remember);
@@ -596,7 +593,7 @@ List<java.awt.Rectangle> changed=null;
             access.add(Ui.primary("Hubungkan semua",this::connectAll));access.add(button("Putus semua",()->cards.forEach(Card::disconnect)));if(!preview)access.add(Ui.themeToggle());toolbar.add(access,BorderLayout.NORTH);
             password.addFocusListener(new FocusAdapter(){public void focusLost(FocusEvent e){if(remember.isSelected())rememberCode();}});
             JPanel actions=Ui.transparent(new Ui.WrapLayout(FlowLayout.LEFT,8,5));actions.add(button("Pilih semua",()->cards.forEach(c->c.selected.setSelected(true))));actions.add(button("Batal pilih",()->cards.forEach(c->c.selected.setSelected(false))));actions.add(Ui.primary("Kontrol serentak",()->{Card c=cards.stream().filter(x->x.selected.isSelected()&&x.peer!=null).findFirst().orElse(null);if(c==null)error(f,new Exception("Hubungkan dan centang minimal satu klien."));else open(c,true);}));actions.add(button("Lepaskan tombol",this::reset));actions.add(Ui.primary("+ Tambah komputer",this::askNewCard));toolbar.add(actions,BorderLayout.CENTER);
-            JPanel top=Ui.transparent(new BorderLayout(0,12));top.add(heading,BorderLayout.NORTH);top.add(toolbar);dashboard.add(top,BorderLayout.NORTH);
+            JPanel top=Ui.transparent(new BorderLayout(0,8));top.add(heading,BorderLayout.NORTH);top.add(toolbar);dashboard.add(top,BorderLayout.NORTH);
             updateBar.add(updateLabel);updateBar.add(Ui.primary("Mulai ulang sekarang",this::installUpdate));updateBar.add(button("Tunda 30 menit",()->{postponeUntil=System.currentTimeMillis()+30*60_000;countdown=-1;tickUpdate();}));updateBar.setVisible(false);top.add(updateBar,BorderLayout.SOUTH);
             for(int i=1;i<=4;i++){Card c=new Card(i,this);cards.add(c);grid.add(c);}JScrollPane scroll=new JScrollPane(grid);gridScroll=scroll;scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);scroll.getViewport().setBackground(Ui.BG);scroll.getVerticalScrollBar().setUnitIncrement(28);dashboard.add(scroll);
             dashboard.add(Ui.label("Klik layar untuk mengontrol  /  Perbesar untuk membaca detail  /  Ctrl+C dan Ctrl+V untuk teks  /  Klik nama komputer untuk mengganti nama",12,false,Ui.MUTED),BorderLayout.SOUTH);

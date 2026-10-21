@@ -118,7 +118,7 @@ class Ui {
 
         static final int GAP=16,SIDE_SLOT=250,ROW=300,FOCUS_NARROW=560;
         /** Tinggi tiap kartu di dashboard mengikuti lebar agar preview mengisi penuh (tanpa bar kiri-kanan). */
-        int rowHeight(int cardWidth){int cap=Math.max(ROW,available()-GAP);for(Component c:getComponents())if(c instanceof LanControl.Card card)return Math.max(ROW,Math.min(card.gridHeightFor(cardWidth),cap));return ROW;}
+        int rowHeight(int cardWidth){for(Component c:getComponents())if(c instanceof LanControl.Card card)return Math.max(ROW,card.gridHeightFor(cardWidth));return ROW;}
         /** Any number of computers: 1 column on narrow windows, 2 normally, 3 on wide windows with more than 4 computers. */
         int columns(){int width=getParent()==null?getWidth():getParent().getWidth(),n=getComponentCount();if(width<1150)return 1;return n<=4||width<1700?2:3;}
         int available(){return getParent()==null?Math.max(getHeight(),740):getParent().getHeight();}
