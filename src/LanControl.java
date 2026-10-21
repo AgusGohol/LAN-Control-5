@@ -17,7 +17,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LanControl {
-    static final String VERSION="1.12.11",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
+    static final String VERSION="1.13.0",HELLO="LAN5 V5 HELLO",READY="LAN5 V5 READY",BUSY="LAN5 V5 BUSY";
     static final int PORT=45971, MAX=8*1024*1024;
     static volatile boolean justUpdated;
     static final Color BG=Ui.BG, PANEL=Ui.SURFACE, TEXT=Ui.TEXT;
@@ -146,8 +146,8 @@ public class LanControl {
         byte[] frame(StreamQuality.State state)throws Exception{return frame(frameCache,state);}
         /** Each master has its own FrameCache: tile updates are relative to the last frame sent to that master. */
         byte[] frame(FrameCache cache,StreamQuality.State state)throws Exception{
-            java.awt.image.BufferedImage shot;
-            synchronized(captureLock){Rectangle bounds=currentBounds();if(!bounds.equals(screen)){captureRobot=new Robot();screen=new Rectangle(bounds);}shot=captureRobot.createScreenCapture(bounds);}
+            java.awt.image.BufferedImage shot=SecureDesktop.current();   // non-null hanya saat UAC/secure desktop aktif
+            if(shot==null)synchronized(captureLock){Rectangle bounds=currentBounds();if(!bounds.equals(screen)){captureRobot=new Robot();screen=new Rectangle(bounds);}shot=captureRobot.createScreenCapture(bounds);}
             return cache.encode(shot,state);
         }
     }
@@ -216,9 +216,9 @@ public class LanControl {
         static boolean[] startupFlags(boolean hasCode,boolean hasShortcut,boolean taskActive){boolean on=hasShortcut||taskActive;return new boolean[]{hasCode||on,!on,on,taskActive};}
         /** IPv4 addresses, skipping automatic 169.254.x.x addresses that cannot be used for control. */
         static String addresses(){List<String>a=new ArrayList<>();try{for(NetworkInterface nic:Collections.list(NetworkInterface.getNetworkInterfaces()))if(nic.isUp()&&!nic.isLoopback())for(InetAddress ip:Collections.list(nic.getInetAddresses()))if(ip instanceof Inet4Address&&!ip.isLinkLocalAddress())a.add(ip.getHostAddress());}catch(Exception ignored){}return a.isEmpty()?"(tidak ada jaringan aktif)":String.join(" / ",a);}
-        void stop(){active=false;for(Wire w:controllers.keySet())w.close();try{if(listener!=null)listener.close();}catch(Exception ignored){}status.setText("Berbagi dihentikan");password.setEnabled(true);}
+        void stop(){active=false;SecureDesktop.stop();for(Wire w:controllers.keySet())w.close();try{if(listener!=null)listener.close();}catch(Exception ignored){}status.setText("Berbagi dihentikan");password.setEnabled(true);}
         void start(){if(active)return;String pass=new String(password.getPassword());if(pass.length()<12){error(f,new Exception("Gunakan kode minimal 12 karakter."));return;}
-            active=true;password.setEnabled(false);status.setText("Menyiapkan berbagi...");
+            active=true;password.setEnabled(false);status.setText("Menyiapkan berbagi...");SecureDesktop.start();
             WORK.submit(()->{
                 // Auto-start retries briefly so the elevated instance can win the port if a stale instance is still releasing it;
                 // if it still can't bind, another client already runs here, so it stands down quietly (no error dialog).

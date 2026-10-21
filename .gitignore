@@ -7,3 +7,16 @@ KUNCI-RILIS-JANGAN-DIBAGIKAN/
 *.key
 preview-*.png
 /ikon/
+
+# Proyek resiko: komponen SYSTEM secure-desktop - TIDAK didistribusikan via repo publik
+uji-secure-desktop/probe1c.cs
+uji-secure-desktop/probe2.cs
+uji-secure-desktop/probe3.cs
+uji-secure-desktop/probe3b.cs
+uji-secure-desktop/sdhelper.cs
+uji-secure-desktop/Uji-1c.bat
+uji-secure-desktop/Uji-2.bat
+uji-secure-desktop/Uji-3.bat
+uji-secure-desktop/Uji-3b.bat
+uji-secure-desktop/Uji-4a.bat
+uji-secure-desktop/Build-Helper.bat
