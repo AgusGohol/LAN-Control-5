@@ -413,7 +413,13 @@ List<java.awt.Rectangle> changed=null;
                 public void mouseReleased(MouseEvent e){if(dragging&&mainButton(e)){move(e);sender.send("UP "+InputEvent.getMaskForButton(e.getButton()));dragging=false;}}
                 public void mouseMoved(MouseEvent e){if(hasFocus())move(e);}public void mouseDragged(MouseEvent e){move(e);}
                 // Touchpads report fractional rotation (getWheelRotation()==0); accumulate until a whole notch is reached.
-                public void mouseWheelMoved(MouseWheelEvent e){if(!area.contains(e.getPoint()))return;wheel+=e.getPreciseWheelRotation();int notches=(int)wheel;if(notches!=0){wheel-=notches;sender.send("WHEEL "+notches);}}
+                public void mouseWheelMoved(MouseWheelEvent e){
+                    if(!enlarged){   // thumbnail dashboard: scroll menggulir halaman, bukan mengontrol klien
+                        Container c=getParent();while(c!=null&&!(c instanceof JScrollPane))c=c.getParent();
+                        if(c instanceof JScrollPane sp){JScrollBar bar=sp.getVerticalScrollBar();bar.setValue(bar.getValue()+(int)Math.round(e.getPreciseWheelRotation()*Math.max(1,bar.getUnitIncrement())*3));}
+                        return;
+                    }
+                    if(!area.contains(e.getPoint()))return;wheel+=e.getPreciseWheelRotation();int notches=(int)wheel;if(notches!=0){wheel-=notches;sender.send("WHEEL "+notches);}}
             };addMouseListener(m);addMouseMotionListener(m);addMouseWheelListener(m);
             addKeyListener(new KeyAdapter(){public void keyPressed(KeyEvent e){int k=e.getKeyCode();boolean ctrlAlt=e.isControlDown()&&e.isAltDown()&&!e.isShiftDown()&&!e.isMetaDown();int[] mapped=ctrlAlt?hotkey(k):null;
                 if(swallowed.contains(k)){}
