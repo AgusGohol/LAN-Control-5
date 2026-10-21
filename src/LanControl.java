@@ -493,6 +493,17 @@ List<java.awt.Rectangle> changed=null;
             actions.add(button("File & akses",()->{if(peer==null)error(owner.f,new Exception("Hubungkan klien terlebih dahulu."));else new RemoteTools(this);}));actions.add(button("Perbesar",()->owner.open(this,false)));footer.add(actions,BorderLayout.EAST);add(footer,BorderLayout.SOUTH);
             selected.addActionListener(e->{Peer p=peer;if(p!=null)p.send("RESET");});
         }
+        /** Tinggi kartu agar area preview (CENTER) menjadi lebar×3/4 (rasio 4:3), sehingga gambar klien mengisi penuh lebar tanpa bar kiri-kanan. */
+        int gridHeightFor(int width){
+            int chrome=0;Insets in=getInsets();chrome+=in.top+in.bottom;
+            if(getLayout() instanceof BorderLayout bl){
+                Component n=bl.getLayoutComponent(BorderLayout.NORTH),s=bl.getLayoutComponent(BorderLayout.SOUTH);
+                if(n!=null)chrome+=n.getPreferredSize().height;
+                if(s!=null)chrome+=s.getPreferredSize().height;
+                chrome+=2*bl.getVgap();
+            }
+            return chrome+Math.max(1,width)*3/4;
+        }
         boolean limited(){return peer!=null&&"BIASA".equals(privilege);}
         void showOnline(){if(peer==null)return;boolean warn=limited(),shared=!others.isEmpty();int count=shared?others.split("\n").length:0;
             status.setText("Online • "+host+(warn?"  •  ⚠ Izin BIASA":"")+(shared?"  •  Juga dikontrol "+count+" komputer utama lain":""));status.setForeground(warn||shared?Ui.WARN:Ui.ACCENT);
